@@ -817,12 +817,7 @@
                 return;
             }
 
-            if (data.type === "CONTINUE_UPDATE") {
-                // 显示谁已点继续
-                const ct = data.continue_players.length;
-                document.getElementById('gameStatus').innerText = `Waiting... ${ct}/${data.total} players ready for next round`;
-                return;
-            }
+
 
             if (data.type === "SHOW_DEAL") {
                 // 所有人都点了continue，显示DEAL按钮
