@@ -448,7 +448,9 @@
     </div>
 
     <script>
-        const ws = new WebSocket("ws://localhost:8000/ws");
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const host = window.location.host;
+        const ws = new WebSocket(`${protocol}${host}/ws`);
         ws.onopen = () => { document.getElementById("status").innerText = "Connected"; document.getElementById("status").style.color = "#4ade80"; };
         ws.onerror = () => { document.getElementById("status").innerText = "Connection failed"; document.getElementById("status").style.color = "#f87171"; };
 
