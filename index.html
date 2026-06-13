@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wizard Card Game</title>
+    <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -53,14 +54,21 @@
         }
         .header { text-align: center; margin-bottom: 30px; }
         h1 {
-            font-size: 2.2em;
+            font-family: 'MedievalSharp', cursive;
+            font-size: 3em;
             font-weight: 700;
             background: linear-gradient(135deg, #e879a8, #a78bfa, #60a5fa);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             margin-bottom: 8px;
+            letter-spacing: 4px;
         }
-        .status { font-size: 0.95em; color: rgba(255,255,255,0.7); margin: 8px 0; }
+        .status {
+            font-family: 'MedievalSharp', cursive;
+            font-size: 0.95em;
+            color: rgba(255,255,255,0.7);
+            margin: 8px 0;
+        }
         .trump-display {
             display: inline-block;
             padding: 12px 28px;
@@ -460,37 +468,32 @@
     </style>
 </head>
 <body>
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
-    <div class="orb orb-3"></div>
-    <div class="orb orb-4"></div>
+    <div class="orb orb-1" style="display:none;"></div>
+    <div class="orb orb-2" style="display:none;"></div>
+    <div class="orb orb-3" style="display:none;"></div>
+    <div class="orb orb-4" style="display:none;"></div>
 
     <!-- LOBBY SCREEN -->
-    <div class="main-container" id="lobbyScreen">
-        <div class="header">
-            <h1>WIZARD</h1>
-            <div class="status" id="status">Enter a room code to create or join</div>
+    <div id="lobbyScreen" style="position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;">
+        <!-- Background logo image -->
+        <div style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:0;overflow:hidden;">
+            <img src="/static/wizard_logo2.png" alt="" style="width:100%;height:100%;object-fit:cover;opacity:0.85;">
         </div>
-
-        <!-- Join/Create form -->
-        <div id="joinForm" class="glass" style="max-width:400px;margin:0 auto;padding:36px;text-align:center;">
-            <input type="text" id="inputName" placeholder="Your name" maxlength="10" style="width:100%;padding:12px 16px;margin-bottom:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:white;font-size:1em;outline:none;">
-            <input type="text" id="inputRoom" placeholder="Room code" maxlength="8" style="width:100%;padding:12px 16px;margin-bottom:20px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:white;font-size:1em;outline:none;">
-            <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
-                <button class="btn-deal" onclick="createRoom()">CREATE</button>
-                <button class="btn-deal" onclick="joinRoomStep1()">JOIN</button>
-                <button class="btn-deal" onclick="rejoinRoom()" style="background:rgba(74,222,128,0.15);border-color:rgba(74,222,128,0.4);color:#86efac;">REJOIN</button>
+        <!-- Overlay form centered on image -->
+        <div id="joinForm" style="position:relative;z-index:2;background:rgba(15,10,40,0.45);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:28px 32px;text-align:center;width:280px;margin-top:15vh;box-shadow:0 8px 40px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.1);">
+            <div class="status" id="status" style="margin-bottom:14px;font-size:0.85em;">Enter a room code to create or join</div>
+            <input type="text" id="inputName" placeholder="USERNAME" maxlength="10" style="width:100%;padding:10px 14px;margin-bottom:8px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:white;font-size:0.9em;outline:none;text-align:center;font-family:'MedievalSharp',cursive;letter-spacing:1px;">
+            <input type="text" id="inputRoom" placeholder="ROOM CODE" maxlength="8" style="width:100%;padding:10px 14px;margin-bottom:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:white;font-size:0.9em;outline:none;text-align:center;font-family:'MedievalSharp',cursive;letter-spacing:1px;">
+            <div style="display:flex;gap:8px;justify-content:center;margin-bottom:8px;">
+                <button class="btn-deal" onclick="createRoom()" style="padding:10px 24px;font-size:0.85em;">CREATE</button>
+                <button class="btn-deal" onclick="joinRoomStep1()" style="padding:10px 24px;font-size:0.85em;">JOIN</button>
             </div>
+            <button class="btn-deal" onclick="rejoinRoom()" style="width:100%;padding:10px 24px;font-size:0.85em;background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.4);color:#fde68a;">REJOIN</button>
         </div>
 
         <!-- Round table (hidden until in room) -->
-        <div id="tableArea" style="display:none;">
-            <div style="text-align:center;margin-bottom:16px;">
-                <span style="font-size:0.8em;color:rgba(255,255,255,0.4);">ROOM</span>
-                <span id="roomCodeDisplay" style="font-size:1.1em;color:#c4b5fd;font-weight:700;margin-left:8px;"></span>
-                <span id="playerCountDisplay" style="font-size:0.8em;color:rgba(255,255,255,0.4);margin-left:16px;"></span>
-            </div>
-            <div id="roundTable" style="position:relative;width:420px;height:420px;margin:0 auto;border-radius:50%;border:2px solid rgba(168,85,247,0.2);background:rgba(168,85,247,0.03);">
+        <div id="tableArea" style="display:none;position:relative;z-index:2;margin-top:20vh;">
+            <div id="roundTable" style="position:relative;width:320px;height:320px;margin:0 auto;border-radius:50%;border:2px solid rgba(168,85,247,0.25);background:rgba(15,10,40,0.4);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 8px 40px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.08);">
             </div>
             <div class="controls" style="margin-top:24px;">
                 <button class="btn-deal" id="btnStart" onclick="startGame()" disabled style="opacity:0.3;cursor:not-allowed;">START GAME</button>
@@ -558,7 +561,7 @@
         const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
         const host = window.location.host;
         const ws = new WebSocket(`${protocol}${host}/ws`);
-        ws.onopen = () => { document.getElementById("status").innerText = "Connected"; document.getElementById("status").style.color = "#4ade80"; };
+        ws.onopen = () => { document.getElementById("status").innerText = "Connected"; document.getElementById("status").style.color = "#fde68a"; };
         ws.onerror = () => { document.getElementById("status").innerText = "Connection failed"; document.getElementById("status").style.color = "#f87171"; };
 
         let currentRound = 1;
@@ -599,7 +602,6 @@
         function showTableForSeatSelection(name, creating) {
             document.getElementById('joinForm').style.display = 'none';
             document.getElementById('tableArea').style.display = 'block';
-            document.getElementById('roomCodeDisplay').innerText = roomCode;
             window._pendingName = name;
             window._creating = creating;
             renderRoundTable([null,null,null,null,null,null], -1);
@@ -607,22 +609,27 @@
         }
         function renderRoundTable(seats, hostSeat) {
             const table = document.getElementById('roundTable');
-            table.innerHTML = '';
-            const radius = 160, cx = 210, cy = 210;
+            // 保留中央信息，重新渲染座位
+            table.innerHTML = `<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;z-index:1;">
+                <div style="font-size:0.7em;color:rgba(255,255,255,0.4);letter-spacing:1px;">ROOM</div>
+                <div id="roomCodeDisplay" style="font-size:1.3em;color:#c4b5fd;font-weight:700;margin:4px 0;">${roomCode}</div>
+                <div id="playerCountDisplay" style="font-size:0.8em;color:rgba(255,255,255,0.4);">${seats.filter(s=>s!==null).length}/6</div>
+            </div>`;
+            const radius = 120, cx = 160, cy = 160;
             for (let i = 0; i < 6; i++) {
                 const angle = (-90 + i * 60) * Math.PI / 180;
-                const x = cx + radius * Math.cos(angle) - 42;
-                const y = cy + radius * Math.sin(angle) - 42;
+                const x = cx + radius * Math.cos(angle) - 36;
+                const y = cy + radius * Math.sin(angle) - 36;
                 const occupied = seats[i] !== null;
                 const isMe = i === mySeat;
-                const borderColor = isMe ? 'rgba(74,222,128,0.6)' : occupied ? 'rgba(168,85,247,0.4)' : 'rgba(255,255,255,0.1)';
+                const borderColor = isMe ? 'rgba(251,191,36,0.6)' : occupied ? 'rgba(168,85,247,0.4)' : 'rgba(255,255,255,0.1)';
                 const bg = occupied ? 'rgba(168,85,247,0.08)' : 'rgba(255,255,255,0.03)';
                 const onclick = occupied ? '' : `onclick="selectSeat(${i})"`;
                 let label = occupied ? seats[i] : '';
-                let badge = isMe ? '<div style="font-size:0.55em;color:#4ade80;margin-top:2px;">YOU</div>' : (i === hostSeat && occupied) ? '<div style="font-size:0.55em;color:#fbbf24;margin-top:2px;">HOST</div>' : '';
-                table.innerHTML += `<div ${onclick} style="position:absolute;left:${x}px;top:${y}px;width:84px;height:84px;border-radius:50%;border:2px solid ${borderColor};background:${bg};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${occupied?'default':'pointer'};transition:all 0.3s;backdrop-filter:blur(10px);"><div style="font-size:0.72em;color:${occupied?'rgba(255,255,255,0.9)':'rgba(255,255,255,0.25)'};font-weight:600;">${label || (i+1)}</div>${badge}</div>`;
+                let badge = isMe ? '<div style="font-size:0.55em;color:#fde68a;margin-top:2px;">YOU</div>' : (i === hostSeat && occupied) ? '<div style="font-size:0.55em;color:#fbbf24;margin-top:2px;">HOST</div>' : '';
+                table.innerHTML += `<div ${onclick} style="position:absolute;left:${x}px;top:${y}px;width:72px;height:72px;border-radius:50%;border:2px solid ${borderColor};background:${bg};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${occupied?'default':'pointer'};transition:all 0.3s;backdrop-filter:blur(10px);"><div style="font-size:0.68em;color:${occupied?'rgba(255,255,255,0.9)':'rgba(255,255,255,0.25)'};font-weight:600;">${label || (i+1)}</div>${badge}</div>`;
             }
-            document.getElementById('playerCountDisplay').innerText = seats.filter(s=>s!==null).length + '/6';
+            // playerCountDisplay 已在 innerHTML 中渲染
         }
         function selectSeat(idx) {
             const name = window._pendingName || 'Player';
@@ -639,6 +646,8 @@
         function switchToGameScreen() {
             document.getElementById('lobbyScreen').style.display = 'none';
             document.getElementById('gameScreen').style.display = 'block';
+            // 游戏界面恢复原始暗色背景，显示orb
+            document.querySelectorAll('.orb').forEach(o => o.style.display = 'block');
         }
 
         function parseCard(cardStr) {
@@ -683,7 +692,6 @@
             if (data.type === "ROOM_FOUND") {
                 document.getElementById('joinForm').style.display = 'none';
                 document.getElementById('tableArea').style.display = 'block';
-                document.getElementById('roomCodeDisplay').innerText = roomCode;
                 window._creating = false;
                 renderRoundTable(data.seats, data.host_seat);
                 document.getElementById('status').innerText = 'Room found! Click an empty seat to join.';
