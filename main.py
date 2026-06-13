@@ -629,6 +629,10 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             if not current_room or current_room not in rooms:
                 continue
             room = rooms[current_room]
+            # 防止重复发牌：只有在 WAITING 或 ROUND_OVER 阶段才允许
+            if room.game_phase not in ("WAITING", "ROUND_OVER"):
+                await websocket.send_text(json.dumps({"type": "ERROR", "msg": "当前回合进行中，无法发牌"}))
+                continue
             room.start_new_round()
             await broadcast_personal(current_room, room)
 
