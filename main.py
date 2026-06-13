@@ -621,15 +621,8 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             p_idx = msg.get("player_idx", -1)
             if p_idx >= 0:
                 room.continue_players.add(p_idx)
-            await broadcast(current_room, {
-                "type": "CONTINUE_UPDATE",
-                "continue_players": list(room.continue_players),
-                "total": room.player_count
-            })
-            # 所有人都点了continue，显示DEAL按钮
-            if len(room.continue_players) >= room.player_count:
-                room.continue_players = set()
-                await broadcast(current_room, {"type": "SHOW_DEAL"})
+            # 只要有一个玩家点了continue就显示DEAL按钮
+            await broadcast(current_room, {"type": "SHOW_DEAL"})
 
         # === 发牌（每人只收到自己的手牌） ===
         elif msg_type == "DEAL":
@@ -705,8 +698,10 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 }))
                 continue
             result = room.play_card(p_idx, card_idx)
-            # 墩结果包含 players 手牌信息时，个人化发送
-            if result.get("type") == "TRICK_RESULT" and "players" in result:
+            # PLAY_INVALID 只发给当事玩家，不广播
+            if result.get("type") == "PLAY_INVALID":
+                await websocket.send_text(json.dumps(result))
+            elif result.get("type") == "TRICK_RESULT" and "players" in result:
                 await broadcast_with_hands(current_room, room, result)
             else:
                 await broadcast(current_room, result)
