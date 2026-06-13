@@ -53,7 +53,9 @@ class GameRoom:
         self.game_phase = "LOBBY"           # LOBBY / BIDDING / PLAYING / ROUND_OVER / GAME_OVER
         self.max_rounds = 0                 # 60 / 人数
         self.ready_players = set()
+        self.continue_players = set()  # 回合结束后点了continue的玩家
         self.round_history = []
+        self.bid_turn = 0  # 当前轮到谁报墩
 
     def get_player_count(self):
         return sum(1 for s in self.seats if s is not None)
@@ -87,6 +89,7 @@ class GameRoom:
         self.cards_in_trick = []
         self.lead_suit = None
         self.game_phase = "BIDDING"
+        self.continue_players = set()
         for p in self.players:
             p.hand = []
             p.prediction = -1  # 重置为未报墩
@@ -112,6 +115,7 @@ class GameRoom:
         if self.round_num == 1:
             self.current_leader = random.randint(0, self.player_count - 1)
         self.current_turn = self.current_leader
+        self.bid_turn = self.current_leader  # 报墩也从 leader 开始
 
     # ====== 核心模块一：validate_move ======
     def validate_move(self, player_idx, card):
@@ -416,6 +420,9 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                         player_idx = i
                         break
                 state = room.get_state_for_player(player_idx) if player_idx >= 0 else {}
+                # 报墩状态：当前轮到谁报墩
+                bid_turn = room.bid_turn
+                bids_done = sum(1 for p in room.players if p.prediction >= 0)
                 await websocket.send_text(json.dumps({
                     "type": "REJOIN_STATE",
                     "room_code": room_code,
@@ -428,7 +435,11 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                     "max_rounds": room.max_rounds,
                     "players_info": [{"name": p.name, "seat_idx": p.seat_idx} for p in room.players],
                     "state": state,
-                    "cards_in_trick": [(idx, str(c)) for idx, c in room.cards_in_trick]
+                    "cards_in_trick": [(idx, str(c)) for idx, c in room.cards_in_trick],
+                    "bid_turn": bid_turn,
+                    "bids_done": bids_done,
+                    "bids_so_far": [{"player_idx": i, "name": p.name, "value": p.prediction}
+                                    for i, p in enumerate(room.players) if p.prediction >= 0]
                 }))
             else:
                 # 大厅或等待状态，就当普通加入
@@ -567,6 +578,24 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 "players": [{"name": p.name, "seat_idx": p.seat_idx} for p in room.players]
             })
 
+        # === 回合结束后点击继续 ===
+        elif msg_type == "CONTINUE_ROUND":
+            if not current_room or current_room not in rooms:
+                continue
+            room = rooms[current_room]
+            p_idx = msg.get("player_idx", -1)
+            if p_idx >= 0:
+                room.continue_players.add(p_idx)
+            await broadcast(current_room, {
+                "type": "CONTINUE_UPDATE",
+                "continue_players": list(room.continue_players),
+                "total": room.player_count
+            })
+            # 所有人都点了continue，显示DEAL按钮
+            if len(room.continue_players) >= room.player_count:
+                room.continue_players = set()
+                await broadcast(current_room, {"type": "SHOW_DEAL"})
+
         # === 发牌（每人只收到自己的手牌） ===
         elif msg_type == "DEAL":
             if not current_room or current_room not in rooms:
@@ -586,10 +615,17 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             # 计算已报墩人数（prediction >= 0 表示已报）
             bids_done = sum(1 for p in room.players if p.prediction >= 0)
             all_bid = (bids_done == room.player_count)
+            # 更新 bid_turn 到下一个人
+            room.bid_turn = (p_idx + 1) % room.player_count
+            # 收集已报墩信息供下一位玩家查看
+            bids_so_far = [{"player_idx": i, "name": p.name, "value": p.prediction}
+                           for i, p in enumerate(room.players) if p.prediction >= 0]
             await broadcast(current_room, {
                 "type": "BID_CONFIRMED",
                 "player_idx": p_idx,
                 "value": bid_value,
+                "next_bid_turn": room.bid_turn,
+                "bids_so_far": bids_so_far,
                 "msg": f"{room.players[p_idx].name}预测赢{bid_value}墩"
             })
             # 如果所有人报完了，自动进入出牌阶段
@@ -619,6 +655,12 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             if not current_room:
                 continue
             room = rooms[current_room]
+            if room.game_phase != "PLAYING":
+                await websocket.send_text(json.dumps({
+                    "type": "PLAY_INVALID",
+                    "msg": "还没有所有玩家报墩完毕，无法出牌"
+                }))
+                continue
             p_idx = msg.get("player_idx")
             card_idx = msg.get("card_index")
             if p_idx != room.current_turn:
