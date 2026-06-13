@@ -189,7 +189,7 @@
             bottom: 0;
             left: 0;
             right: 0;
-            padding: 20px 30px 25px;
+            padding: 38px 30px 25px;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -235,6 +235,23 @@
         .card.drag-over {
             border-color: rgba(168,85,247,0.8) !important;
             box-shadow: 0 0 20px rgba(168,85,247,0.4);
+        }
+        .card.selected {
+            transform: translateY(-14px) scale(1.1);
+            border-color: rgba(255, 255, 255, 0.6) !important;
+            box-shadow: 0 12px 40px rgba(168, 85, 247, 0.5), 0 0 15px rgba(255,255,255,0.2);
+        }
+        .card.selected::after {
+            content: 'TAP TO PLAY';
+            position: absolute;
+            bottom: -18px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.5em;
+            color: #c4b5fd;
+            white-space: nowrap;
+            font-weight: 700;
+            letter-spacing: 0.5px;
         }
 
         .controls { text-align: center; margin-top: 20px; }
@@ -493,8 +510,8 @@
 
         <div class="glass trick-area" id="trickArea" style="display:none;"></div>
 
-        <div class="controls" id="dealControls" style="display:none;">
-            <button class="btn-deal" onclick="deal()">DEAL</button>
+        <div class="controls" id="dealControls">
+            <button class="btn-deal" id="btnDeal" onclick="deal()" disabled style="opacity:0.3;cursor:not-allowed;">DEAL</button>
         </div>
     </div>
 
@@ -730,8 +747,8 @@
                 gamePlayers = data.players;
                 myPlayerIdx = gamePlayers.findIndex(p => p.seat_idx === mySeat);
                 switchToGameScreen();
-                // 第一回合直接显示DEAL按钮
-                document.getElementById('dealControls').style.display = 'block';
+                // 第一回合直接亮起DEAL按钮
+                enableDealBtn();
                 document.getElementById('gameStatus').innerText = `${playerCount} players, ${data.max_rounds} rounds. Any player click DEAL to start!`;
                 document.getElementById('players').style.gridTemplateColumns = `repeat(${Math.min(playerCount,4)},1fr)`;
                 return;
@@ -820,9 +837,9 @@
 
 
             if (data.type === "SHOW_DEAL") {
-                // 所有人都点了continue，显示DEAL按钮
-                document.getElementById('dealControls').style.display = 'block';
-                document.getElementById('gameStatus').innerText = 'All ready! Any player can click DEAL.';
+                // 计分板关闭后亮起DEAL按钮
+                enableDealBtn();
+                document.getElementById('gameStatus').innerText = 'Any player can click DEAL.';
                 return;
             }
 
@@ -837,7 +854,7 @@
                 currentLeader = -1;
                 cardsOnTable = {};
                 closeScoreModal();
-                document.getElementById('dealControls').style.display = 'block';
+                enableDealBtn();
                 document.getElementById("gameStatus").innerText = "New game! Any player click DEAL to start.";
                 document.getElementById("trumpCard").innerHTML = '<span style="color:rgba(255,255,255,0.3);">--</span>';
                 return;
@@ -849,6 +866,8 @@
             }
 
             if (data.type === "DEAL_RESULT") {
+                // 先关闭可能残留的记分板
+                closeScoreModal();
                 currentRound = data.round;
                 currentTurn = data.current_turn;
                 currentLeader = data.current_leader;
@@ -858,8 +877,8 @@
                 allPlayersData = data.players;
                 cardsOnTable = {};  // 新回合清空桌面
                 renderPlayers(data.players);
-                // 隐藏DEAL按钮
-                document.getElementById('dealControls').style.display = 'none';
+                // 禁用DEAL按钮（回合进行中）
+                disableDealBtn();
                 document.getElementById('gameStatus').innerText = `Round ${data.round}`;
                 // 报墩从 bid_start（上一轮最后吃墩者）开始
                 currentBidsSoFar = [];  // 新回合清空
@@ -954,6 +973,7 @@
                 area.style.display = "none";
                 return;
             }
+            selectedCardIdx = -1;  // 重新渲染时清除选中
             area.style.display = "flex";
             const cards = allPlayersData[playerIdx].hand;
             const name = gamePlayers[playerIdx] ? gamePlayers[playerIdx].name : 'P'+(playerIdx+1);
@@ -1229,9 +1249,41 @@
         function closeToast() {
             document.getElementById('toastOverlay').style.display = 'none';
         }
-        function deal() { ws.send(JSON.stringify({"type": "DEAL"})); }
+        function enableDealBtn() {
+            const btn = document.getElementById('btnDeal');
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+        }
+        function disableDealBtn() {
+            const btn = document.getElementById('btnDeal');
+            btn.disabled = true;
+            btn.style.opacity = '0.3';
+            btn.style.cursor = 'not-allowed';
+        }
+        function deal() {
+            const btn = document.getElementById('btnDeal');
+            if (btn.disabled) return;
+            ws.send(JSON.stringify({"type": "DEAL"}));
+            disableDealBtn();
+        }
         function sendBid(idx, val) { ws.send(JSON.stringify({type: 'BID', player_idx: idx, value: val})); }
-        function playCard(playerIdx, cardIdx) { ws.send(JSON.stringify({type: 'PLAY', player_idx: playerIdx, card_index: cardIdx})); }
+        let selectedCardIdx = -1;
+        function playCard(playerIdx, cardIdx) {
+            if (playerIdx !== myPlayerIdx) return;
+            if (selectedCardIdx === cardIdx) {
+                // 第二次点击，确认出牌
+                ws.send(JSON.stringify({type: 'PLAY', player_idx: playerIdx, card_index: cardIdx}));
+                selectedCardIdx = -1;
+            } else {
+                // 第一次点击，选中牌
+                selectedCardIdx = cardIdx;
+                // 更新选中状态
+                document.querySelectorAll('#handArea .card').forEach((c, i) => {
+                    c.classList.toggle('selected', i === cardIdx);
+                });
+            }
+        }
     </script>
 </body>
 </html>
