@@ -420,7 +420,7 @@ html_content = r'''
 
         <div class="glass trick-area" id="trickArea" style="display:none;"></div>
 
-        <div class="controls">
+        <div class="controls" id="dealControls" style="display:none;">
             <button class="btn-deal" onclick="deal()">DEAL</button>
         </div>
     </div>
@@ -597,6 +597,7 @@ html_content = r'''
                 playerCount = data.player_count;
                 gamePlayers = data.players_info;
                 currentLeader = data.state.current_leader;
+                currentRound = data.state.round;
                 switchToGameScreen();
                 document.getElementById('players').style.gridTemplateColumns = `repeat(${Math.min(playerCount,4)},1fr)`;
                 allPlayersData = data.state.players;
@@ -612,6 +613,17 @@ html_content = r'''
                 if (data.state.trump) renderTrumpCard(data.state.trump);
                 showHandArea(myPlayerIdx);
                 document.getElementById('gameStatus').innerText = `Round ${data.state.round} | ${data.game_phase}`;
+                // 如果正在报墩阶段且轮到我，弹出 bid 窗口
+                if (data.game_phase === 'BIDDING' && data.bid_turn === myPlayerIdx) {
+                    currentTrumpDisplay = data.state.trump ? data.state.trump.display : null;
+                    if (data.bids_so_far) currentBidsSoFar = data.bids_so_far;
+                    showBidModal(myPlayerIdx);
+                }
+                // 如果是 ROUND_OVER，显示记分板
+                if (data.game_phase === 'ROUND_OVER' && data.state.scores) {
+                    // 用简化方式显示当前状态
+                    document.getElementById('gameStatus').innerText = 'Round over - click CONTINUE when ready';
+                }
                 return;
             }
             if (data.type === "PLAYER_OFFLINE" || data.type === "PLAYER_ONLINE") { return; }
@@ -635,7 +647,9 @@ html_content = r'''
                 gamePlayers = data.players;
                 myPlayerIdx = gamePlayers.findIndex(p => p.seat_idx === mySeat);
                 switchToGameScreen();
-                document.getElementById('gameStatus').innerText = `${playerCount} players, ${data.max_rounds} rounds. Click DEAL.`;
+                // 第一回合直接显示DEAL按钮
+                document.getElementById('dealControls').style.display = 'block';
+                document.getElementById('gameStatus').innerText = `${playerCount} players, ${data.max_rounds} rounds. Any player click DEAL to start!`;
                 document.getElementById('players').style.gridTemplateColumns = `repeat(${Math.min(playerCount,4)},1fr)`;
                 return;
             }
@@ -644,22 +658,17 @@ html_content = r'''
                 document.getElementById('gameStatus').innerText = data.msg;
                 const statsEl = document.querySelectorAll('.player-stats')[data.player_idx];
                 if (statsEl) statsEl.innerHTML = `Predict: <strong>${data.value}</strong> | Won: <strong>0</strong>`;
-                // 下一个报墩者（循环顺序）
-                window._bidCount = (window._bidCount || 0) + 1;
-                if (window._bidCount >= playerCount) {
-                    // 所有人报完，服务器会自动发 PLAY_START
-                    window._bidCount = 0;
-                    closeBidModal();
+                // 保存已报墩信息
+                if (data.bids_so_far) currentBidsSoFar = data.bids_so_far;
+                // 服务器告诉我下一个报墩者
+                const nextBidder = data.next_bid_turn;
+                bidPlayerIdx = nextBidder;
+                if (nextBidder === myPlayerIdx) {
+                    showBidModal(nextBidder);
                 } else {
-                    const nextBidder = (data.player_idx + 1) % playerCount;
-                    bidPlayerIdx = nextBidder;
-                    if (nextBidder === myPlayerIdx) {
-                        showBidModal(nextBidder);
-                    } else {
-                        closeBidModal();
-                        const name = gamePlayers[nextBidder] ? gamePlayers[nextBidder].name : 'P'+(nextBidder+1);
-                        document.getElementById('gameStatus').innerText = `Waiting ${name} to bid...`;
-                    }
+                    closeBidModal();
+                    const name = gamePlayers[nextBidder] ? gamePlayers[nextBidder].name : 'P'+(nextBidder+1);
+                    document.getElementById('gameStatus').innerText = `Waiting ${name} to bid...`;
                 }
                 return;
             }
@@ -668,6 +677,7 @@ html_content = r'''
                 currentTurn = data.current_turn;
                 cardsOnTable = {};  // 新墩开始清空
                 renderCardsOnTable();
+                closeBidModal();  // 确保 bid 弹窗关闭
                 document.getElementById('gameStatus').innerText = data.msg;
                 highlightCurrentPlayer();
                 showHandArea(myPlayerIdx);
@@ -724,6 +734,20 @@ html_content = r'''
                 return;
             }
 
+            if (data.type === "CONTINUE_UPDATE") {
+                // 显示谁已点继续
+                const ct = data.continue_players.length;
+                document.getElementById('gameStatus').innerText = `Waiting... ${ct}/${data.total} players ready for next round`;
+                return;
+            }
+
+            if (data.type === "SHOW_DEAL") {
+                // 所有人都点了continue，显示DEAL按钮
+                document.getElementById('dealControls').style.display = 'block';
+                document.getElementById('gameStatus').innerText = 'All ready! Any player can click DEAL.';
+                return;
+            }
+
             if (data.type === "READY_UPDATE") {
                 readyPlayers = data.ready_players;
                 updateReadyStatus();
@@ -735,7 +759,8 @@ html_content = r'''
                 currentLeader = -1;
                 cardsOnTable = {};
                 closeScoreModal();
-                document.getElementById("gameStatus").innerText = "New game! Click DEAL to start.";
+                document.getElementById('dealControls').style.display = 'block';
+                document.getElementById("gameStatus").innerText = "New game! Any player click DEAL to start.";
                 document.getElementById("trumpCard").innerHTML = '<span style="color:rgba(255,255,255,0.3);">--</span>';
                 return;
             }
@@ -755,9 +780,11 @@ html_content = r'''
                 allPlayersData = data.players;
                 cardsOnTable = {};  // 新回合清空桌面
                 renderPlayers(data.players);
+                // 隐藏DEAL按钮
+                document.getElementById('dealControls').style.display = 'none';
                 document.getElementById('gameStatus').innerText = `Round ${data.round}`;
                 // 报墩从 bid_start（上一轮最后吃墩者）开始
-                window._bidCount = 0;
+                currentBidsSoFar = [];  // 新回合清空
                 bidPlayerIdx = data.bid_start !== undefined ? data.bid_start : 0;
                 if (myPlayerIdx === bidPlayerIdx) {
                     showBidModal(bidPlayerIdx);
@@ -871,7 +898,7 @@ html_content = r'''
                     </div>
                     <div id="readyStatus" style="margin-top:16px;font-size:0.8em;color:rgba(255,255,255,0.4);"></div>`;
             } else {
-                actions.innerHTML = `<button class="btn-continue" onclick="closeScoreModal()">CONTINUE</button>`;
+                actions.innerHTML = `<button class="btn-continue" onclick="sendContinue()">CONTINUE</button>`;
             }
         }
 
@@ -931,6 +958,11 @@ html_content = r'''
             }
         }
 
+        function sendContinue() {
+            ws.send(JSON.stringify({type: 'CONTINUE_ROUND', player_idx: myPlayerIdx}));
+            closeScoreModal();
+            document.getElementById('gameStatus').innerText = 'Waiting for other players...';
+        }
         function closeScoreModal() { document.getElementById("scoreModal").style.display = "none"; }
 
         function renderTrumpCard(trump) {
@@ -969,11 +1001,34 @@ html_content = r'''
             }
         }
 
+        let currentBidsSoFar = [];  // 存储当前已报墩信息
+
         function showBidModal(playerIdx) {
             const modal = document.getElementById("bidModal");
             modal.style.display = "flex";
             const name = gamePlayers[playerIdx] ? gamePlayers[playerIdx].name : 'P'+(playerIdx+1);
             document.getElementById("bidTitle").innerText = `${name} - Place your bid`;
+            // 显示之前玩家的报墩信息
+            let bidsHtml = '';
+            if (currentBidsSoFar.length > 0) {
+                bidsHtml = '<div style="margin-bottom:16px;padding:12px 16px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);text-align:left;">';
+                bidsHtml += '<div style="font-size:0.7em;color:rgba(255,255,255,0.4);margin-bottom:8px;">PREVIOUS BIDS</div>';
+                currentBidsSoFar.forEach(b => {
+                    bidsHtml += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;">`;
+                    bidsHtml += `<span style="color:rgba(255,255,255,0.7);font-size:0.9em;">${b.name}</span>`;
+                    bidsHtml += `<span style="color:#c4b5fd;font-weight:700;font-size:1.1em;">${b.value}</span>`;
+                    bidsHtml += `</div>`;
+                });
+                bidsHtml += '</div>';
+            }
+            // 插入到 bidTrumpInfo 后面
+            let existingBidsDiv = document.getElementById('bidPreviousBids');
+            if (!existingBidsDiv) {
+                existingBidsDiv = document.createElement('div');
+                existingBidsDiv.id = 'bidPreviousBids';
+                document.getElementById('bidTrumpInfo').after(existingBidsDiv);
+            }
+            existingBidsDiv.innerHTML = bidsHtml;
             // Show trump card directly in bid modal (no flip animation)
             const trumpInfo = document.getElementById("bidTrumpInfo");
             if (currentTrumpDisplay && currentTrumpDisplay !== '\u65e0') {
