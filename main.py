@@ -269,8 +269,25 @@ class GameRoom:
         })
         return round_scores
 
-    # ====== 状态快照 ======
-    def get_state(self):
+    # ====== 状态快照（每个玩家只能看到自己的手牌） ======
+    def get_state_for_player(self, viewer_idx):
+        """viewer_idx: 查看者的玩家索引，只暴露自己的手牌"""
+        players_data = []
+        for i, p in enumerate(self.players):
+            if i == viewer_idx:
+                players_data.append({
+                    "name": p.name, "prediction": p.prediction,
+                    "tricks_won": p.tricks_won,
+                    "hand": [str(c) for c in p.hand],
+                    "card_count": len(p.hand)
+                })
+            else:
+                players_data.append({
+                    "name": p.name, "prediction": p.prediction,
+                    "tricks_won": p.tricks_won,
+                    "hand": [],  # 不暴露他人手牌
+                    "card_count": len(p.hand)
+                })
         return {
             "round": self.round_num,
             "phase": self.game_phase,
@@ -283,17 +300,12 @@ class GameRoom:
             "current_leader": self.current_leader,
             "tricks_played": self.tricks_played,
             "scores": self.scores,
-            "players": [
-                {"name": p.name, "prediction": p.prediction,
-                 "tricks_won": p.tricks_won,
-                 "hand": [str(c) for c in p.hand]}
-                for p in self.players
-            ]
+            "players": players_data
         }
 
 # ====== 房间管理 ======
 rooms: Dict[str, GameRoom] = {}
-room_connections: Dict[str, List[fastapi.WebSocket]] = {}  # room_code -> [ws, ...]
+room_connections: Dict[str, Dict[int, fastapi.WebSocket]] = {}  # room_code -> {seat_idx: ws}
 
 app = fastapi.FastAPI()
 
@@ -301,14 +313,65 @@ app = fastapi.FastAPI()
 async def get(): return fastapi.responses.FileResponse('index.html')
 
 async def broadcast(room_code, message):
-    """广播消息给房间内所有连接"""
+    """广播相同消息给房间内所有连接"""
     if room_code in room_connections:
         msg_str = json.dumps(message)
-        for ws in room_connections[room_code]:
+        for ws in room_connections[room_code].values():
             try:
                 await ws.send_text(msg_str)
             except:
                 pass
+
+async def broadcast_personal(room_code, room):
+    """发牌后给每个玩家发送个人化状态（只能看到自己的牌）"""
+    if room_code not in room_connections:
+        return
+    for seat_idx, ws in room_connections[room_code].items():
+        # 找到该座位对应的 player_idx
+        player_idx = -1
+        for i, p in enumerate(room.players):
+            if p.seat_idx == seat_idx:
+                player_idx = i
+                break
+        if player_idx < 0:
+            continue
+        state = room.get_state_for_player(player_idx)
+        state["type"] = "DEAL_RESULT"
+        state["my_player_idx"] = player_idx
+        try:
+            await ws.send_text(json.dumps(state))
+        except:
+            pass
+
+async def broadcast_with_hands(room_code, room, base_message):
+    """墩结果等需要更新手牌的消息，每人只看到自己的牌"""
+    if room_code not in room_connections:
+        return
+    for seat_idx, ws in room_connections[room_code].items():
+        player_idx = -1
+        for i, p in enumerate(room.players):
+            if p.seat_idx == seat_idx:
+                player_idx = i
+                break
+        if player_idx < 0:
+            continue
+        msg = dict(base_message)
+        # 替换 players 字段为个人化版本
+        if "players" in msg:
+            personal_players = []
+            for i, p in enumerate(room.players):
+                if i == player_idx:
+                    personal_players.append({"name": p.name, "prediction": p.prediction,
+                        "tricks_won": p.tricks_won, "hand": [str(c) for c in p.hand], "card_count": len(p.hand)})
+                else:
+                    personal_players.append({"name": p.name, "prediction": p.prediction,
+                        "tricks_won": p.tricks_won, "hand": [], "card_count": len(p.hand)})
+            msg["players"] = personal_players
+        msg["my_player_idx"] = player_idx
+        try:
+            await ws.send_text(json.dumps(msg))
+        except:
+            pass
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: fastapi.WebSocket):
@@ -332,7 +395,7 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             room = GameRoom(room_code, seat_idx)
             room.seats[seat_idx] = player_name
             rooms[room_code] = room
-            room_connections[room_code] = [websocket]
+            room_connections[room_code] = {seat_idx: websocket}
             current_room = room_code
             my_seat = seat_idx
             await websocket.send_text(json.dumps({
@@ -359,7 +422,7 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 await websocket.send_text(json.dumps({"type": "ERROR", "msg": "座位已被占"}))
                 continue
             room.seats[seat_idx] = player_name
-            room_connections[room_code].append(websocket)
+            room_connections[room_code][seat_idx] = websocket
             current_room = room_code
             my_seat = seat_idx
             await websocket.send_text(json.dumps({
@@ -395,15 +458,13 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 "players": [{"name": p.name, "seat_idx": p.seat_idx} for p in room.players]
             })
 
-        # === 发牌 ===
+        # === 发牌（每人只收到自己的手牌） ===
         elif msg_type == "DEAL":
             if not current_room or current_room not in rooms:
                 continue
             room = rooms[current_room]
             room.start_new_round()
-            response = room.get_state()
-            response["type"] = "DEAL_RESULT"
-            await broadcast(current_room, response)
+            await broadcast_personal(current_room, room)
 
         # === 报墩 ===
         elif msg_type == "BID":
@@ -445,7 +506,11 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 }))
                 continue
             result = room.play_card(p_idx, card_idx)
-            await broadcast(current_room, result)
+            # 墩结果包含 players 手牌信息时，个人化发送
+            if result.get("type") == "TRICK_RESULT" and "players" in result:
+                await broadcast_with_hands(current_room, room, result)
+            else:
+                await broadcast(current_room, result)
 
         # === 再来一局 ===
         elif msg_type == "READY":
@@ -475,7 +540,7 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 room = rooms[current_room]
                 room.seats[my_seat] = None
                 if current_room in room_connections:
-                    room_connections[current_room] = [w for w in room_connections[current_room] if w != websocket]
+                    room_connections[current_room] = {k: v for k, v in room_connections[current_room].items() if v != websocket}
                 await broadcast(current_room, {
                     "type": "SEATS_UPDATE",
                     "seats": room.seats,
@@ -491,15 +556,18 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
         # 连接断开时清理
         if current_room and current_room in rooms:
             room = rooms[current_room]
-            if my_seat >= 0 and my_seat < 6:
+            if 0 <= my_seat < 6:
                 room.seats[my_seat] = None
             if current_room in room_connections:
-                room_connections[current_room] = [w for w in room_connections[current_room] if w != websocket]
-            await broadcast(current_room, {
-                "type": "SEATS_UPDATE",
-                "seats": room.seats,
-                "can_start": room.can_start()
-            })
+                room_connections[current_room] = {k: v for k, v in room_connections[current_room].items() if v != websocket}
+            try:
+                await broadcast(current_room, {
+                    "type": "SEATS_UPDATE",
+                    "seats": room.seats,
+                    "can_start": room.can_start()
+                })
+            except:
+                pass
             if room.get_player_count() == 0:
                 del rooms[current_room]
                 if current_room in room_connections:
