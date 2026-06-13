@@ -384,9 +384,23 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
         msg = json.loads(data)
         msg_type = msg.get("type")
 
+        # === 查询房间是否存在 ===
+        if msg_type == "CHECK_ROOM":
+            room_code = msg.get("room_code", "").strip().upper()
+            if room_code not in rooms:
+                await websocket.send_text(json.dumps({"type": "ROOM_NOT_FOUND", "room_code": room_code}))
+            else:
+                room = rooms[room_code]
+                await websocket.send_text(json.dumps({
+                    "type": "ROOM_FOUND",
+                    "room_code": room_code,
+                    "seats": room.seats,
+                    "host_seat": room.host_seat
+                }))
+
         # === 创建房间 ===
-        if msg_type == "CREATE_ROOM":
-            room_code = msg.get("room_code", "").strip()
+        elif msg_type == "CREATE_ROOM":
+            room_code = msg.get("room_code", "").strip().upper()
             seat_idx = msg.get("seat_idx", 0)
             player_name = msg.get("name", "Player")
             if room_code in rooms:
@@ -408,7 +422,7 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
 
         # === 加入房间 ===
         elif msg_type == "JOIN_ROOM":
-            room_code = msg.get("room_code", "").strip()
+            room_code = msg.get("room_code", "").strip().upper()
             seat_idx = msg.get("seat_idx", -1)
             player_name = msg.get("name", "Player")
             if room_code not in rooms:
