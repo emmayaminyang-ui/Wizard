@@ -413,7 +413,15 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             my_seat = found_seat
             room_connections[room_code][found_seat] = websocket
             # 如果游戏进行中，发送当前状态
-            if room.game_phase in ("BIDDING", "PLAYING", "ROUND_OVER"):
+            if room.game_phase == "ROUND_OVER":
+                # 计分板阶段重连，自动算作已点continue
+                if player_idx >= 0:
+                    room.continue_players.add(player_idx)
+            elif room.game_phase == "GAME_OVER":
+                # 整局结束阶段重连，自动算作已点ready
+                if player_idx >= 0:
+                    room.ready_players.add(player_idx)
+            if room.game_phase in ("BIDDING", "PLAYING", "ROUND_OVER", "GAME_OVER"):
                 player_idx = -1
                 for i, p in enumerate(room.players):
                     if p.seat_idx == found_seat:
@@ -451,6 +459,28 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                     "my_seat": found_seat
                 }))
             await broadcast(current_room, {"type": "PLAYER_ONLINE", "seat_idx": found_seat, "name": player_name})
+            # 重连后自动确认状态并广播进度
+            if room.game_phase == "ROUND_OVER":
+                await broadcast(current_room, {
+                    "type": "CONTINUE_UPDATE",
+                    "continue_players": list(room.continue_players),
+                    "total": room.player_count
+                })
+                if len(room.continue_players) >= room.player_count:
+                    room.continue_players = set()
+                    await broadcast(current_room, {"type": "SHOW_DEAL"})
+            elif room.game_phase == "GAME_OVER":
+                await broadcast(current_room, {
+                    "type": "READY_UPDATE",
+                    "ready_players": list(room.ready_players)
+                })
+                if len(room.ready_players) >= room.player_count:
+                    room.round_num = 0
+                    room.scores = [0] * room.player_count
+                    room.round_history = []
+                    room.ready_players = set()
+                    room.game_phase = "WAITING"
+                    await broadcast(current_room, {"type": "GAME_RESTART"})
 
         # === 查询房间是否存在 ===
         elif msg_type == "CHECK_ROOM":
@@ -478,6 +508,7 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             room.seats[seat_idx] = player_name
             rooms[room_code] = room
             room_connections[room_code] = {seat_idx: websocket}
+            # 名字唯一性由 CREATE_ROOM 保证（第一个人不会重复）
             current_room = room_code
             my_seat = seat_idx
             await websocket.send_text(json.dumps({
@@ -540,6 +571,10 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 continue
             if seat_idx < 0 or seat_idx > 5 or room.seats[seat_idx] is not None:
                 await websocket.send_text(json.dumps({"type": "ERROR", "msg": "座位已被占"}))
+                continue
+            # 名字唯一性检查
+            if player_name in [s for s in room.seats if s is not None]:
+                await websocket.send_text(json.dumps({"type": "ERROR", "msg": f"名字'{player_name}'已被使用，请换一个"}))
                 continue
             room.seats[seat_idx] = player_name
             room_connections[room_code][seat_idx] = websocket
