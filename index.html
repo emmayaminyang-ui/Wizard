@@ -1280,8 +1280,9 @@
         function playCard(playerIdx, cardIdx) {
             if (playerIdx !== myPlayerIdx) return;
             if (selectedCardIdx === cardIdx) {
-                // 第二次点击，确认出牌
-                ws.send(JSON.stringify({type: 'PLAY', player_idx: playerIdx, card_index: cardIdx}));
+                // 第二次点击，确认出牌 - 发送牌名而非索引
+                const cardName = allPlayersData[myPlayerIdx].hand[cardIdx];
+                ws.send(JSON.stringify({type: 'PLAY', player_idx: playerIdx, card_name: cardName}));
                 selectedCardIdx = -1;
             } else {
                 // 第一次点击，选中牌
