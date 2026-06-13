@@ -699,7 +699,23 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 }))
                 continue
             p_idx = msg.get("player_idx")
-            card_idx = msg.get("card_index")
+            # 支持 card_name（优先）和 card_index 两种方式
+            card_name = msg.get("card_name", "")
+            if card_name:
+                player_hand = room.players[p_idx].hand
+                card_idx = -1
+                for i, c in enumerate(player_hand):
+                    if c.display_name == card_name:
+                        card_idx = i
+                        break
+                if card_idx == -1:
+                    await websocket.send_text(json.dumps({
+                        "type": "PLAY_INVALID",
+                        "msg": f"手牌中没有{card_name}"
+                    }))
+                    continue
+            else:
+                card_idx = msg.get("card_index", -1)
             if p_idx != room.current_turn:
                 await websocket.send_text(json.dumps({
                     "type": "PLAY_INVALID",
