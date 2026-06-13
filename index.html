@@ -78,10 +78,15 @@
             padding: 20px 16px;
             text-align: center;
             transition: all 0.3s ease;
+            min-height: 180px;
         }
         .player-box.active {
             border-color: rgba(168, 85, 247, 0.6) !important;
             box-shadow: 0 0 30px rgba(168, 85, 247, 0.3), inset 0 0 30px rgba(168, 85, 247, 0.05);
+        }
+        .player-box.leader {
+            border-color: rgba(251, 191, 36, 0.6) !important;
+            box-shadow: 0 0 20px rgba(251, 191, 36, 0.25);
         }
         .player-name {
             font-size: 1.1em;
@@ -381,9 +386,10 @@
         <div id="joinForm" class="glass" style="max-width:400px;margin:0 auto;padding:36px;text-align:center;">
             <input type="text" id="inputName" placeholder="Your name" maxlength="10" style="width:100%;padding:12px 16px;margin-bottom:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:white;font-size:1em;outline:none;">
             <input type="text" id="inputRoom" placeholder="Room code" maxlength="8" style="width:100%;padding:12px 16px;margin-bottom:20px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:white;font-size:1em;outline:none;">
-            <div style="display:flex;gap:12px;justify-content:center;">
+            <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
                 <button class="btn-deal" onclick="createRoom()">CREATE</button>
                 <button class="btn-deal" onclick="joinRoomStep1()">JOIN</button>
+                <button class="btn-deal" onclick="rejoinRoom()" style="background:rgba(74,222,128,0.15);border-color:rgba(74,222,128,0.4);color:#86efac;">REJOIN</button>
             </div>
         </div>
 
@@ -412,7 +418,7 @@
 
         <div class="game-area" id="players"></div>
 
-        <div class="glass trick-area" id="trickArea"></div>
+        <div class="glass trick-area" id="trickArea" style="display:none;"></div>
 
         <div class="controls">
             <button class="btn-deal" onclick="deal()">DEAL</button>
@@ -466,6 +472,8 @@
         let myPlayerIdx = -1;
         let roomCode = '';
         let gamePlayers = [];
+        let currentLeader = -1;  // 上一墩赢家/回合开始者
+        let cardsOnTable = {};   // {playerIdx: cardStr} 当前墩各玩家出的牌
 
         // ====== LOBBY ======
         function createRoom() {
@@ -481,6 +489,12 @@
             // 先查询房间是否存在，存在才显示座位
             window._pendingName = name;
             ws.send(JSON.stringify({type:'CHECK_ROOM', room_code:roomCode}));
+        }
+        function rejoinRoom() {
+            const name = document.getElementById('inputName').value.trim();
+            roomCode = document.getElementById('inputRoom').value.trim().toUpperCase();
+            if (!name || !roomCode) { alert('Enter your name and room code'); return; }
+            ws.send(JSON.stringify({type:'REJOIN', room_code:roomCode, name:name}));
         }
         function showTableForSeatSelection(name, creating) {
             document.getElementById('joinForm').style.display = 'none';
@@ -567,7 +581,6 @@
                 return;
             }
             if (data.type === "ROOM_FOUND") {
-                // 房间存在，显示座位选择界面（带已有玩家）
                 document.getElementById('joinForm').style.display = 'none';
                 document.getElementById('tableArea').style.display = 'block';
                 document.getElementById('roomCodeDisplay').innerText = roomCode;
@@ -576,6 +589,32 @@
                 document.getElementById('status').innerText = 'Room found! Click an empty seat to join.';
                 return;
             }
+            if (data.type === "REJOIN_STATE") {
+                // 重连成功，恢复游戏状态
+                mySeat = data.my_seat;
+                myPlayerIdx = data.my_player_idx;
+                roomCode = data.room_code;
+                playerCount = data.player_count;
+                gamePlayers = data.players_info;
+                currentLeader = data.state.current_leader;
+                switchToGameScreen();
+                document.getElementById('players').style.gridTemplateColumns = `repeat(${Math.min(playerCount,4)},1fr)`;
+                allPlayersData = data.state.players;
+                renderPlayers(data.state.players);
+                currentTurn = data.state.current_turn;
+                highlightCurrentPlayer();
+                // 恢复当前墩已出的牌
+                cardsOnTable = {};
+                if (data.cards_in_trick) {
+                    data.cards_in_trick.forEach(([idx, cardStr]) => { cardsOnTable[idx] = cardStr; });
+                    renderCardsOnTable();
+                }
+                if (data.state.trump) renderTrumpCard(data.state.trump);
+                showHandArea(myPlayerIdx);
+                document.getElementById('gameStatus').innerText = `Round ${data.state.round} | ${data.game_phase}`;
+                return;
+            }
+            if (data.type === "PLAYER_OFFLINE" || data.type === "PLAYER_ONLINE") { return; }
             if (data.type === "ROOM_JOINED") {
                 mySeat = data.my_seat;
                 isHost = (data.host_seat === mySeat);
@@ -605,21 +644,30 @@
                 document.getElementById('gameStatus').innerText = data.msg;
                 const statsEl = document.querySelectorAll('.player-stats')[data.player_idx];
                 if (statsEl) statsEl.innerHTML = `Predict: <strong>${data.value}</strong> | Won: <strong>0</strong>`;
-                bidPlayerIdx++;
-                if (bidPlayerIdx < playerCount) {
-                    // 只有轮到自己bid时才弹窗，否则等待
-                    if (bidPlayerIdx === myPlayerIdx) {
-                        showBidModal(bidPlayerIdx);
-                    }
-                } else {
+                // 下一个报墩者（循环顺序）
+                window._bidCount = (window._bidCount || 0) + 1;
+                if (window._bidCount >= playerCount) {
+                    // 所有人报完，服务器会自动发 PLAY_START
+                    window._bidCount = 0;
                     closeBidModal();
-                    ws.send(JSON.stringify({type: 'BID_DONE'}));
+                } else {
+                    const nextBidder = (data.player_idx + 1) % playerCount;
+                    bidPlayerIdx = nextBidder;
+                    if (nextBidder === myPlayerIdx) {
+                        showBidModal(nextBidder);
+                    } else {
+                        closeBidModal();
+                        const name = gamePlayers[nextBidder] ? gamePlayers[nextBidder].name : 'P'+(nextBidder+1);
+                        document.getElementById('gameStatus').innerText = `Waiting ${name} to bid...`;
+                    }
                 }
                 return;
             }
 
             if (data.type === "PLAY_START") {
                 currentTurn = data.current_turn;
+                cardsOnTable = {};  // 新墩开始清空
+                renderCardsOnTable();
                 document.getElementById('gameStatus').innerText = data.msg;
                 highlightCurrentPlayer();
                 showHandArea(myPlayerIdx);
@@ -628,14 +676,19 @@
 
             if (data.type === "PLAY_OK") {
                 currentTurn = data.next_turn;
+                if (data.current_leader !== undefined) currentLeader = data.current_leader;
                 const nextName = gamePlayers[data.next_turn] ? gamePlayers[data.next_turn].name : 'P'+(data.next_turn+1);
-                document.getElementById('gameStatus').innerText = `Played: ${data.card_played} | Next: ${nextName}`;
-                updateTrickArea(data.cards_in_trick);
+                document.getElementById('gameStatus').innerText = `Next: ${nextName}`;
+                // 将出的牌显示在玩家名下方
+                cardsOnTable[data.player_idx] = data.card_played;
+                renderCardsOnTable();
                 highlightCurrentPlayer();
-                // 如果是自己出的牌，刷新手牌区（删除已出的）
-                if (data.player_idx === myPlayerIdx) {
-                    allPlayersData[myPlayerIdx].hand = allPlayersData[myPlayerIdx].hand.filter((_,i) => true);
-                    // 实际上需要从服务器重新获取，但简单处理：移除出的那张
+                // 如果是自己出的牌，移除手牌中对应的
+                if (data.player_idx === myPlayerIdx && allPlayersData[myPlayerIdx]) {
+                    // 找到并移除出的牌
+                    const handArr = allPlayersData[myPlayerIdx].hand;
+                    const cardIdx = handArr.indexOf(data.card_played);
+                    if (cardIdx >= 0) handArr.splice(cardIdx, 1);
                 }
                 showHandArea(myPlayerIdx);
                 return;
@@ -648,6 +701,7 @@
 
             if (data.type === "TRICK_RESULT") {
                 currentTurn = data.next_turn || data.winner;
+                currentLeader = data.winner;  // 赢家下墩开始
                 if (data.my_player_idx !== undefined) myPlayerIdx = data.my_player_idx;
                 let msg = `${data.winner_name} wins trick #${data.tricks_played}`;
                 if (data.round_over) {
@@ -656,7 +710,11 @@
                     hideHandArea();
                 }
                 document.getElementById('gameStatus').innerText = msg;
-                document.getElementById("trickArea").innerHTML = "";
+                // 短暂显示墩结果后清空桌面
+                setTimeout(() => {
+                    cardsOnTable = {};
+                    renderCardsOnTable();
+                }, 2000);
                 if (data.players) {
                     allPlayersData = data.players;
                     renderPlayers(data.players);
@@ -674,9 +732,10 @@
 
             if (data.type === "GAME_RESTART") {
                 readyPlayers = [];
+                currentLeader = -1;
+                cardsOnTable = {};
                 closeScoreModal();
                 document.getElementById("gameStatus").innerText = "New game! Click DEAL to start.";
-                document.getElementById("trickArea").innerHTML = "";
                 document.getElementById("trumpCard").innerHTML = '<span style="color:rgba(255,255,255,0.3);">--</span>';
                 return;
             }
@@ -689,18 +748,23 @@
             if (data.type === "DEAL_RESULT") {
                 currentRound = data.round;
                 currentTurn = data.current_turn;
+                currentLeader = data.current_leader;
                 if (data.my_player_idx !== undefined) myPlayerIdx = data.my_player_idx;
                 currentTrumpDisplay = data.trump.display;
                 renderTrumpCard(data.trump);
                 allPlayersData = data.players;
+                cardsOnTable = {};  // 新回合清空桌面
                 renderPlayers(data.players);
                 document.getElementById('gameStatus').innerText = `Round ${data.round}`;
-                // 报墩从第0号玩家开始，只有轮到自己才弹窗
-                bidPlayerIdx = 0;
-                if (myPlayerIdx === 0) {
-                    showBidModal(0);
+                // 报墩从 bid_start（上一轮最后吃墩者）开始
+                window._bidCount = 0;
+                bidPlayerIdx = data.bid_start !== undefined ? data.bid_start : 0;
+                if (myPlayerIdx === bidPlayerIdx) {
+                    showBidModal(bidPlayerIdx);
+                } else {
+                    const bidderName = gamePlayers[bidPlayerIdx] ? gamePlayers[bidPlayerIdx].name : 'P'+(bidPlayerIdx+1);
+                    document.getElementById('gameStatus').innerText = `Round ${data.round} | Waiting ${bidderName} to bid...`;
                 }
-                // 底部显示自己的手牌
                 showHandArea(myPlayerIdx);
                 return;
             }
@@ -714,14 +778,31 @@
                 const cardCount = p.card_count !== undefined ? p.card_count : p.hand.length;
                 const name = gamePlayers[index] ? gamePlayers[index].name : ('P'+(index+1));
                 const isMe = index === myPlayerIdx;
+                const isLeader = index === currentLeader;
+                const leaderBorder = isLeader ? 'border-color:rgba(251,191,36,0.6)!important;box-shadow:0 0 20px rgba(251,191,36,0.25);' : '';
                 container.innerHTML += `
-                    <div class="glass player-box" id="pbox_${index}">
-                        <div class="player-name">${name}${isMe ? ' (You)' : ''}</div>
+                    <div class="glass player-box" id="pbox_${index}" style="${leaderBorder}">
+                        <div class="player-name">${name}${isMe ? ' 👤' : ''}${isLeader ? ' ⭐' : ''}</div>
                         <div class="player-stats">Predict: <strong>${p.prediction}</strong> | Won: <strong>${p.tricks_won}</strong></div>
                         <div style="color:rgba(255,255,255,0.3);font-size:0.8em;">${cardCount} cards</div>
+                        <div class="player-card-slot" id="card_slot_${index}" style="min-height:100px;margin-top:8px;display:flex;justify-content:center;"></div>
                     </div>
                 `;
             });
+            renderCardsOnTable();
+        }
+
+        function renderCardsOnTable() {
+            // 在每个玩家名下方显示其出的牌
+            for (let i = 0; i < playerCount; i++) {
+                const slot = document.getElementById(`card_slot_${i}`);
+                if (!slot) continue;
+                if (cardsOnTable[i]) {
+                    slot.innerHTML = makeCardHtml(cardsOnTable[i], -1, -1, false);
+                } else {
+                    slot.innerHTML = '';
+                }
+            }
         }
 
         function showHandArea(playerIdx) {
@@ -751,13 +832,6 @@
             document.querySelectorAll('.player-box').forEach((box, i) => {
                 box.classList.toggle('active', i === currentTurn);
             });
-        }
-
-        function updateTrickArea(cards) {
-            const area = document.getElementById("trickArea");
-            let html = '';
-            cards.forEach(c => { html += makeCardHtml(c[1], -1, -1, false); });
-            area.innerHTML = html;
         }
 
         let readyPlayers = [];
@@ -898,7 +972,8 @@
         function showBidModal(playerIdx) {
             const modal = document.getElementById("bidModal");
             modal.style.display = "flex";
-            document.getElementById("bidTitle").innerText = `P${playerIdx + 1} - Place your bid`;
+            const name = gamePlayers[playerIdx] ? gamePlayers[playerIdx].name : 'P'+(playerIdx+1);
+            document.getElementById("bidTitle").innerText = `${name} - Place your bid`;
             // Show trump card directly in bid modal (no flip animation)
             const trumpInfo = document.getElementById("bidTrumpInfo");
             if (currentTrumpDisplay && currentTrumpDisplay !== '\u65e0') {
