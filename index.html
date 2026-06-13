@@ -512,7 +512,10 @@
         }
         function selectSeat(idx) {
             const name = window._pendingName || 'Player';
-            if (window._creating) {
+            if (mySeat >= 0) {
+                // 已经坐下了，换座位
+                ws.send(JSON.stringify({type:'CHANGE_SEAT', seat_idx:idx, name:name}));
+            } else if (window._creating) {
                 ws.send(JSON.stringify({type:'CREATE_ROOM', room_code:roomCode, seat_idx:idx, name:name}));
             } else {
                 ws.send(JSON.stringify({type:'JOIN_ROOM', room_code:roomCode, seat_idx:idx, name:name}));
