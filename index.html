@@ -448,6 +448,7 @@
     </div>
 
     <script>
+        // 自动获取当前网页的域名，并根据协议自动判断是 ws 还是 wss
         const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
         const host = window.location.host;
         const ws = new WebSocket(`${protocol}${host}/ws`);
@@ -576,18 +577,21 @@
                 gamePlayers = data.players;
                 myPlayerIdx = gamePlayers.findIndex(p => p.seat_idx === mySeat);
                 switchToGameScreen();
-                document.getElementById('gameStatus').innerText = `${playerCount} players, ${data.max_rounds} rounds. Host clicks DEAL.`;
+                document.getElementById('gameStatus').innerText = `${playerCount} players, ${data.max_rounds} rounds. Click DEAL.`;
                 document.getElementById('players').style.gridTemplateColumns = `repeat(${Math.min(playerCount,4)},1fr)`;
                 return;
             }
 
             if (data.type === "BID_CONFIRMED") {
-                document.getElementById("status").innerText = data.msg;
+                document.getElementById('gameStatus').innerText = data.msg;
                 const statsEl = document.querySelectorAll('.player-stats')[data.player_idx];
                 if (statsEl) statsEl.innerHTML = `Predict: <strong>${data.value}</strong> | Won: <strong>0</strong>`;
                 bidPlayerIdx++;
                 if (bidPlayerIdx < playerCount) {
-                    showBidModal(bidPlayerIdx);
+                    // 只有轮到自己bid时才弹窗，否则等待
+                    if (bidPlayerIdx === myPlayerIdx) {
+                        showBidModal(bidPlayerIdx);
+                    }
                 } else {
                     closeBidModal();
                     ws.send(JSON.stringify({type: 'BID_DONE'}));
@@ -597,18 +601,24 @@
 
             if (data.type === "PLAY_START") {
                 currentTurn = data.current_turn;
-                document.getElementById("status").innerText = data.msg;
+                document.getElementById('gameStatus').innerText = data.msg;
                 highlightCurrentPlayer();
-                showHandArea(currentTurn);
+                showHandArea(myPlayerIdx);
                 return;
             }
 
             if (data.type === "PLAY_OK") {
                 currentTurn = data.next_turn;
-                document.getElementById("status").innerText = `Played: ${data.card_played} | Next: P${data.next_turn + 1}`;
+                const nextName = gamePlayers[data.next_turn] ? gamePlayers[data.next_turn].name : 'P'+(data.next_turn+1);
+                document.getElementById('gameStatus').innerText = `Played: ${data.card_played} | Next: ${nextName}`;
                 updateTrickArea(data.cards_in_trick);
                 highlightCurrentPlayer();
-                showHandArea(currentTurn);
+                // 如果是自己出的牌，刷新手牌区（删除已出的）
+                if (data.player_idx === myPlayerIdx) {
+                    allPlayersData[myPlayerIdx].hand = allPlayersData[myPlayerIdx].hand.filter((_,i) => true);
+                    // 实际上需要从服务器重新获取，但简单处理：移除出的那张
+                }
+                showHandArea(myPlayerIdx);
                 return;
             }
 
@@ -619,18 +629,21 @@
 
             if (data.type === "TRICK_RESULT") {
                 currentTurn = data.next_turn || data.winner;
+                if (data.my_player_idx !== undefined) myPlayerIdx = data.my_player_idx;
                 let msg = `${data.winner_name} wins trick #${data.tricks_played}`;
                 if (data.round_over) {
                     msg += data.game_over ? " | GAME OVER!" : " | Round over!";
                     showScores(data.round_history, data.total_scores, data.game_over);
                     hideHandArea();
                 }
-                document.getElementById("status").innerText = msg;
+                document.getElementById('gameStatus').innerText = msg;
                 document.getElementById("trickArea").innerHTML = "";
-                allPlayersData = data.players;
-                renderPlayers(data.players);
+                if (data.players) {
+                    allPlayersData = data.players;
+                    renderPlayers(data.players);
+                }
                 highlightCurrentPlayer();
-                if (!data.round_over) showHandArea(currentTurn);
+                if (!data.round_over) showHandArea(myPlayerIdx);
                 return;
             }
 
@@ -657,13 +670,19 @@
             if (data.type === "DEAL_RESULT") {
                 currentRound = data.round;
                 currentTurn = data.current_turn;
+                if (data.my_player_idx !== undefined) myPlayerIdx = data.my_player_idx;
                 currentTrumpDisplay = data.trump.display;
                 renderTrumpCard(data.trump);
                 allPlayersData = data.players;
                 renderPlayers(data.players);
                 document.getElementById('gameStatus').innerText = `Round ${data.round}`;
+                // 报墩从第0号玩家开始，只有轮到自己才弹窗
                 bidPlayerIdx = 0;
-                showBidModal(0);
+                if (myPlayerIdx === 0) {
+                    showBidModal(0);
+                }
+                // 底部显示自己的手牌
+                showHandArea(myPlayerIdx);
                 return;
             }
         };
@@ -673,11 +692,12 @@
             const container = document.getElementById("players");
             container.innerHTML = "";
             players.forEach((p, index) => {
-                const cardCount = p.hand.length;
+                const cardCount = p.card_count !== undefined ? p.card_count : p.hand.length;
                 const name = gamePlayers[index] ? gamePlayers[index].name : ('P'+(index+1));
+                const isMe = index === myPlayerIdx;
                 container.innerHTML += `
                     <div class="glass player-box" id="pbox_${index}">
-                        <div class="player-name">${name}</div>
+                        <div class="player-name">${name}${isMe ? ' (You)' : ''}</div>
                         <div class="player-stats">Predict: <strong>${p.prediction}</strong> | Won: <strong>${p.tricks_won}</strong></div>
                         <div style="color:rgba(255,255,255,0.3);font-size:0.8em;">${cardCount} cards</div>
                     </div>
@@ -687,13 +707,18 @@
 
         function showHandArea(playerIdx) {
             const area = document.getElementById("handArea");
+            if (playerIdx === undefined || playerIdx < 0) playerIdx = myPlayerIdx;
+            if (!allPlayersData[playerIdx] || allPlayersData[playerIdx].hand.length === 0) {
+                area.style.display = "none";
+                return;
+            }
             area.style.display = "flex";
-            if (!allPlayersData[playerIdx]) return;
             const cards = allPlayersData[playerIdx].hand;
-            let html = '<span class="hand-label">P' + (playerIdx+1) + "'s hand</span>";
+            const name = gamePlayers[playerIdx] ? gamePlayers[playerIdx].name : 'P'+(playerIdx+1);
+            const canClick = (playerIdx === myPlayerIdx);
+            let html = `<span class="hand-label">${name}</span>`;
             cards.forEach((card, idx) => {
-                const cardEl = makeCardHtml(card, playerIdx, idx, true);
-                // Wrap with deal animation, staggered delay
+                const cardEl = makeCardHtml(card, playerIdx, idx, canClick);
                 html += `<span class="card-deal-anim" style="animation-delay:${idx * 0.08}s">${cardEl}</span>`;
             });
             area.innerHTML = html;
