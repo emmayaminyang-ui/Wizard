@@ -29,7 +29,7 @@ class Player:
         self.name = name
         self.seat_idx = seat_idx
         self.hand = []
-        self.prediction = 0
+        self.prediction = -1  # -1 = 未报墩
         self.tricks_won = 0
 
 class GameRoom:
@@ -89,7 +89,7 @@ class GameRoom:
         self.game_phase = "BIDDING"
         for p in self.players:
             p.hand = []
-            p.prediction = 0
+            p.prediction = -1  # 重置为未报墩
             p.tricks_won = 0
         # 发牌：每人发 round_num 张
         for _ in range(self.round_num):
@@ -243,6 +243,7 @@ class GameRoom:
                 "card_played": str(card),
                 "player_idx": player_idx,
                 "next_turn": self.current_turn,
+                "current_leader": self.current_leader,
                 "cards_in_trick": [(idx, str(c)) for idx, c in self.cards_in_trick],
                 "lead_suit": self.lead_suit,
                 "trump_suit": self.trump_suit,
@@ -274,16 +275,17 @@ class GameRoom:
         """viewer_idx: 查看者的玩家索引，只暴露自己的手牌"""
         players_data = []
         for i, p in enumerate(self.players):
+            pred_display = p.prediction if p.prediction >= 0 else "--"
             if i == viewer_idx:
                 players_data.append({
-                    "name": p.name, "prediction": p.prediction,
+                    "name": p.name, "prediction": pred_display,
                     "tricks_won": p.tricks_won,
                     "hand": [str(c) for c in p.hand],
                     "card_count": len(p.hand)
                 })
             else:
                 players_data.append({
-                    "name": p.name, "prediction": p.prediction,
+                    "name": p.name, "prediction": pred_display,
                     "tricks_won": p.tricks_won,
                     "hand": [],  # 不暴露他人手牌
                     "card_count": len(p.hand)
@@ -338,6 +340,7 @@ async def broadcast_personal(room_code, room):
         state = room.get_state_for_player(player_idx)
         state["type"] = "DEAL_RESULT"
         state["my_player_idx"] = player_idx
+        state["bid_start"] = room.current_leader  # 报墩从谁开始
         try:
             await ws.send_text(json.dumps(state))
         except:
@@ -384,8 +387,62 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
         msg = json.loads(data)
         msg_type = msg.get("type")
 
+        # === 重新连接（刷新后重新加入游戏） ===
+        if msg_type == "REJOIN":
+            room_code = msg.get("room_code", "").strip().upper()
+            player_name = msg.get("name", "").strip()
+            if room_code not in rooms:
+                await websocket.send_text(json.dumps({"type": "ERROR", "msg": "房间不存在"}))
+                continue
+            room = rooms[room_code]
+            # 通过名字找到座位
+            found_seat = -1
+            for i, s in enumerate(room.seats):
+                if s == player_name:
+                    found_seat = i
+                    break
+            if found_seat < 0:
+                await websocket.send_text(json.dumps({"type": "ERROR", "msg": f"房间中没有名为{player_name}的玩家"}))
+                continue
+            # 恢复连接
+            current_room = room_code
+            my_seat = found_seat
+            room_connections[room_code][found_seat] = websocket
+            # 如果游戏进行中，发送当前状态
+            if room.game_phase in ("BIDDING", "PLAYING", "ROUND_OVER"):
+                player_idx = -1
+                for i, p in enumerate(room.players):
+                    if p.seat_idx == found_seat:
+                        player_idx = i
+                        break
+                state = room.get_state_for_player(player_idx) if player_idx >= 0 else {}
+                await websocket.send_text(json.dumps({
+                    "type": "REJOIN_STATE",
+                    "room_code": room_code,
+                    "seats": room.seats,
+                    "host_seat": room.host_seat,
+                    "my_seat": found_seat,
+                    "my_player_idx": player_idx,
+                    "game_phase": room.game_phase,
+                    "player_count": room.player_count,
+                    "max_rounds": room.max_rounds,
+                    "players_info": [{"name": p.name, "seat_idx": p.seat_idx} for p in room.players],
+                    "state": state,
+                    "cards_in_trick": [(idx, str(c)) for idx, c in room.cards_in_trick]
+                }))
+            else:
+                # 大厅或等待状态，就当普通加入
+                await websocket.send_text(json.dumps({
+                    "type": "ROOM_JOINED",
+                    "room_code": room_code,
+                    "seats": room.seats,
+                    "host_seat": room.host_seat,
+                    "my_seat": found_seat
+                }))
+            await broadcast(current_room, {"type": "PLAYER_ONLINE", "seat_idx": found_seat, "name": player_name})
+
         # === 查询房间是否存在 ===
-        if msg_type == "CHECK_ROOM":
+        elif msg_type == "CHECK_ROOM":
             room_code = msg.get("room_code", "").strip().upper()
             if room_code not in rooms:
                 await websocket.send_text(json.dumps({"type": "ROOM_NOT_FOUND", "room_code": room_code}))
@@ -526,23 +583,36 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
             p_idx = msg.get("player_idx")
             bid_value = msg.get("value")
             room.players[p_idx].prediction = bid_value
+            # 计算已报墩人数（prediction >= 0 表示已报）
+            bids_done = sum(1 for p in room.players if p.prediction >= 0)
+            all_bid = (bids_done == room.player_count)
             await broadcast(current_room, {
                 "type": "BID_CONFIRMED",
                 "player_idx": p_idx,
                 "value": bid_value,
                 "msg": f"{room.players[p_idx].name}预测赢{bid_value}墩"
             })
+            # 如果所有人报完了，自动进入出牌阶段
+            if all_bid:
+                room.game_phase = "PLAYING"
+                await broadcast(current_room, {
+                    "type": "PLAY_START",
+                    "current_turn": room.current_turn,
+                    "msg": f"请{room.players[room.current_turn].name}首发出牌"
+                })
 
         elif msg_type == "BID_DONE":
+            # 兼容旧逻辑，但主要由服务端自动触发
             if not current_room:
                 continue
             room = rooms[current_room]
-            room.game_phase = "PLAYING"
-            await broadcast(current_room, {
-                "type": "PLAY_START",
-                "current_turn": room.current_turn,
-                "msg": f"请{room.players[room.current_turn].name}首发出牌"
-            })
+            if room.game_phase != "PLAYING":
+                room.game_phase = "PLAYING"
+                await broadcast(current_room, {
+                    "type": "PLAY_START",
+                    "current_turn": room.current_turn,
+                    "msg": f"请{room.players[room.current_turn].name}首发出牌"
+                })
 
         # === 出牌 ===
         elif msg_type == "PLAY":
@@ -608,19 +678,28 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
         # 连接断开时清理
         if current_room and current_room in rooms:
             room = rooms[current_room]
-            if 0 <= my_seat < 6:
-                room.seats[my_seat] = None
+            # 游戏进行中不清除座位（允许重连），仅移除ws连接
+            if room.game_phase == "LOBBY":
+                if 0 <= my_seat < 6:
+                    room.seats[my_seat] = None
             if current_room in room_connections:
                 room_connections[current_room] = {k: v for k, v in room_connections[current_room].items() if v != websocket}
             try:
-                await broadcast(current_room, {
-                    "type": "SEATS_UPDATE",
-                    "seats": room.seats,
-                    "can_start": room.can_start()
-                })
+                if room.game_phase == "LOBBY":
+                    await broadcast(current_room, {
+                        "type": "SEATS_UPDATE",
+                        "seats": room.seats,
+                        "can_start": room.can_start()
+                    })
+                else:
+                    await broadcast(current_room, {
+                        "type": "PLAYER_OFFLINE",
+                        "seat_idx": my_seat,
+                        "name": room.seats[my_seat] if (0 <= my_seat < 6) else ""
+                    })
             except:
                 pass
-            if room.get_player_count() == 0:
+            if room.game_phase == "LOBBY" and room.get_player_count() == 0:
                 del rooms[current_room]
                 if current_room in room_connections:
                     del room_connections[current_room]
