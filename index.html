@@ -1,0 +1,883 @@
+
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wizard Card Game</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Pro Display', -apple-system, sans-serif;
+            background: #0a0a1a;
+            color: white;
+            min-height: 100vh;
+            overflow-x: hidden;
+            position: relative;
+        }
+        /* Background orbs */
+        .orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.6;
+            z-index: 0;
+        }
+        .orb-1 { width: 400px; height: 400px; background: radial-gradient(circle, #e879a8, #a855f7); top: -100px; left: -100px; }
+        .orb-2 { width: 350px; height: 350px; background: radial-gradient(circle, #7c3aed, #4f46e5); bottom: -80px; right: -80px; }
+        .orb-3 { width: 200px; height: 200px; background: radial-gradient(circle, #c084fc, #8b5cf6); top: 50%; left: 60%; }
+        .orb-4 { width: 150px; height: 150px; background: radial-gradient(circle, #f472b6, #ec4899); bottom: 30%; left: 10%; }
+
+        /* Glass panels */
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+        }
+        .glass-strong {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 24px;
+        }
+
+        .main-container {
+            position: relative;
+            z-index: 1;
+            padding: 30px 20px 200px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header { text-align: center; margin-bottom: 30px; }
+        h1 {
+            font-size: 2.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #e879a8, #a78bfa, #60a5fa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+        .status { font-size: 0.95em; color: rgba(255,255,255,0.7); margin: 8px 0; }
+        .trump-display {
+            display: inline-block;
+            padding: 12px 28px;
+            margin: 15px 0;
+            font-size: 1em;
+            color: rgba(255,255,255,0.9);
+        }
+        .game-area {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin: 25px 0;
+        }
+        .player-box {
+            padding: 20px 16px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        .player-box.active {
+            border-color: rgba(168, 85, 247, 0.6) !important;
+            box-shadow: 0 0 30px rgba(168, 85, 247, 0.3), inset 0 0 30px rgba(168, 85, 247, 0.05);
+        }
+        .player-name {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 8px;
+        }
+        .player-stats {
+            font-size: 0.85em;
+            color: rgba(255,255,255,0.5);
+            margin-bottom: 12px;
+        }
+        .player-stats strong { color: rgba(255,255,255,0.85); }
+
+        /* Card styles - poker format with glassmorphism */
+        .card {
+            position: relative;
+            width: 68px;
+            height: 96px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.04);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: inline-block;
+            margin: 4px;
+            user-select: none;
+            overflow: hidden;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 50%);
+            border-radius: 14px;
+            pointer-events: none;
+        }
+        .card:hover {
+            transform: translateY(-10px) scale(1.08);
+            box-shadow: 0 16px 50px rgba(168, 85, 247, 0.35);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+        .card .corner {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1px;
+        }
+        .card .corner-tl { top: 7px; left: 8px; }
+        .card .corner-br { bottom: 7px; right: 8px; transform: rotate(180deg); }
+        .card .corner .num {
+            font-size: 1.05em;
+            font-weight: 800;
+            line-height: 1;
+            letter-spacing: -0.5px;
+        }
+        .card .corner .suit-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            margin-top: 2px;
+        }
+        .card .center-symbol {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.8em;
+            font-weight: 800;
+            opacity: 0.25;
+        }
+        .card.red .corner .num { color: #f87171; }
+        .card.red .corner .suit-dot { background: #f87171; }
+        .card.red .center-symbol { color: #f87171; }
+        .card.red { border-color: rgba(248, 113, 113, 0.25); background: rgba(248, 113, 113, 0.03); }
+        .card.blue .corner .num { color: #60a5fa; }
+        .card.blue .corner .suit-dot { background: #60a5fa; }
+        .card.blue .center-symbol { color: #60a5fa; }
+        .card.blue { border-color: rgba(96, 165, 250, 0.25); background: rgba(96, 165, 250, 0.03); }
+        .card.yellow .corner .num { color: #fbbf24; }
+        .card.yellow .corner .suit-dot { background: #fbbf24; }
+        .card.yellow .center-symbol { color: #fbbf24; }
+        .card.yellow { border-color: rgba(251, 191, 36, 0.25); background: rgba(251, 191, 36, 0.03); }
+        .card.green .corner .num { color: #4ade80; }
+        .card.green .corner .suit-dot { background: #4ade80; }
+        .card.green .center-symbol { color: #4ade80; }
+        .card.green { border-color: rgba(74, 222, 128, 0.25); background: rgba(74, 222, 128, 0.03); }
+        .card.special {
+            border-color: rgba(192, 132, 252, 0.35);
+            background: rgba(139, 92, 246, 0.06);
+        }
+        .card.special .corner .num { color: #c084fc; }
+        .card.special .corner .suit-dot { background: #c084fc; }
+        .card.special .center-symbol { color: #c084fc; opacity: 0.35; }
+
+        /* Hand area at bottom */
+        .hand-area {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 20px 30px 25px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+            z-index: 100;
+            background: rgba(10, 10, 26, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(255,255,255,0.08);
+        }
+        .hand-label {
+            position: absolute;
+            top: 6px;
+            left: 30px;
+            font-size: 0.75em;
+            color: rgba(255,255,255,0.4);
+        }
+
+        .controls { text-align: center; margin-top: 20px; }
+        .btn-deal {
+            background: rgba(168, 85, 247, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(168, 85, 247, 0.4);
+            color: #e9d5ff;
+            padding: 14px 36px;
+            font-size: 1em;
+            border-radius: 14px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .btn-deal:hover {
+            background: rgba(168, 85, 247, 0.35);
+            box-shadow: 0 8px 30px rgba(168, 85, 247, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .trick-area {
+            text-align: center;
+            margin: 16px 0;
+            padding: 14px 20px;
+            color: rgba(255,255,255,0.8);
+            font-size: 0.95em;
+            min-height: 30px;
+        }
+
+        /* Modals */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.75);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-box {
+            background: rgba(20, 10, 40, 0.85);
+            backdrop-filter: blur(40px);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 28px;
+            padding: 40px;
+            text-align: center;
+            min-width: 380px;
+            box-shadow: 0 25px 80px rgba(0,0,0,0.5);
+        }
+        .modal-title {
+            font-size: 1.4em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #e879a8, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 16px;
+        }
+        .modal-subtitle { color: rgba(255,255,255,0.5); margin-bottom: 24px; font-size: 0.9em; }
+        .bid-btn {
+            width: 52px; height: 52px;
+            border-radius: 50%;
+            border: 1px solid rgba(168, 85, 247, 0.5);
+            background: rgba(168, 85, 247, 0.12);
+            color: #c4b5fd;
+            font-size: 1.3em;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin: 5px;
+        }
+        .bid-btn:hover {
+            background: rgba(168, 85, 247, 0.5);
+            color: white;
+            box-shadow: 0 4px 20px rgba(168, 85, 247, 0.4);
+            transform: scale(1.1);
+        }
+        .score-table {
+            width: 100%; border-collapse: collapse;
+            color: rgba(255,255,255,0.85); font-size: 0.9em;
+        }
+        .score-table th { padding: 10px; color: #c4b5fd; font-weight: 600; }
+        .score-table td { padding: 8px; }
+        .score-table tr { border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .btn-continue {
+            margin-top: 24px;
+            padding: 12px 32px;
+            background: rgba(168, 85, 247, 0.3);
+            border: 1px solid rgba(168, 85, 247, 0.5);
+            color: #e9d5ff;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.95em;
+            transition: all 0.2s;
+        }
+        .btn-continue:hover { background: rgba(168, 85, 247, 0.5); }
+
+        /* Card flip animation */
+        .card-flip-container {
+            perspective: 800px;
+            display: inline-block;
+        }
+        .card-flip-inner {
+            position: relative;
+            transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-style: preserve-3d;
+        }
+        .card-flip-inner.flipped {
+            transform: rotateY(180deg);
+        }
+        .card-flip-inner .card-back {
+            position: absolute;
+            top: 0; left: 0;
+            width: 68px; height: 96px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, rgba(168,85,247,0.15), rgba(236,72,153,0.1));
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(168,85,247,0.3);
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card-flip-inner .card-back::after {
+            content: '';
+            width: 30px; height: 30px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(192,132,252,0.4), transparent);
+        }
+        .card-flip-inner .card-front {
+            backface-visibility: hidden;
+            transform: rotateY(180deg);
+        }
+
+        /* Deal card entrance */
+        @keyframes cardDealIn {
+            0% { opacity: 0; transform: translateY(30px) scale(0.8) rotateZ(-5deg); }
+            60% { opacity: 1; transform: translateY(-5px) scale(1.02) rotateZ(1deg); }
+            100% { opacity: 1; transform: translateY(0) scale(1) rotateZ(0); }
+        }
+        .card-deal-anim {
+            animation: cardDealIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+            opacity: 0;
+        }
+
+        /* Trump reveal glow pulse */
+        @keyframes trumpGlow {
+            0% { box-shadow: 0 0 0 rgba(168,85,247,0); }
+            50% { box-shadow: 0 0 30px rgba(168,85,247,0.5), 0 0 60px rgba(168,85,247,0.2); }
+            100% { box-shadow: 0 0 15px rgba(168,85,247,0.2); }
+        }
+        .trump-reveal {
+            animation: trumpGlow 1.2s ease-out;
+        }
+
+        @media (max-width: 900px) {
+            .game-area { grid-template-columns: repeat(2, 1fr); }
+            .hand-area { padding: 15px 10px 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="orb orb-4"></div>
+
+    <!-- LOBBY SCREEN -->
+    <div class="main-container" id="lobbyScreen">
+        <div class="header">
+            <h1>WIZARD</h1>
+            <div class="status" id="status">Enter a room code to create or join</div>
+        </div>
+
+        <!-- Join/Create form -->
+        <div id="joinForm" class="glass" style="max-width:400px;margin:0 auto;padding:36px;text-align:center;">
+            <input type="text" id="inputName" placeholder="Your name" maxlength="10" style="width:100%;padding:12px 16px;margin-bottom:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:white;font-size:1em;outline:none;">
+            <input type="text" id="inputRoom" placeholder="Room code" maxlength="8" style="width:100%;padding:12px 16px;margin-bottom:20px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:white;font-size:1em;outline:none;">
+            <div style="display:flex;gap:12px;justify-content:center;">
+                <button class="btn-deal" onclick="createRoom()">CREATE</button>
+                <button class="btn-deal" onclick="joinRoomStep1()">JOIN</button>
+            </div>
+        </div>
+
+        <!-- Round table (hidden until in room) -->
+        <div id="tableArea" style="display:none;">
+            <div style="text-align:center;margin-bottom:16px;">
+                <span style="font-size:0.8em;color:rgba(255,255,255,0.4);">ROOM</span>
+                <span id="roomCodeDisplay" style="font-size:1.1em;color:#c4b5fd;font-weight:700;margin-left:8px;"></span>
+                <span id="playerCountDisplay" style="font-size:0.8em;color:rgba(255,255,255,0.4);margin-left:16px;"></span>
+            </div>
+            <div id="roundTable" style="position:relative;width:420px;height:420px;margin:0 auto;border-radius:50%;border:2px solid rgba(168,85,247,0.2);background:rgba(168,85,247,0.03);">
+            </div>
+            <div class="controls" style="margin-top:24px;">
+                <button class="btn-deal" id="btnStart" onclick="startGame()" disabled style="opacity:0.3;cursor:not-allowed;">START GAME</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- GAME SCREEN (hidden until game starts) -->
+    <div class="main-container" id="gameScreen" style="display:none;">
+        <div class="header">
+            <h1>WIZARD</h1>
+            <div class="status" id="gameStatus">Waiting...</div>
+            <div class="glass trump-display" id="trump" style="display:inline-flex;align-items:center;gap:10px;"><span id="trumpLabel" style="font-size:0.75em;color:rgba(255,255,255,0.4);">TRUMP</span><span id="trumpCard"></span></div>
+        </div>
+
+        <div class="game-area" id="players"></div>
+
+        <div class="glass trick-area" id="trickArea"></div>
+
+        <div class="controls">
+            <button class="btn-deal" onclick="deal()">DEAL</button>
+        </div>
+    </div>
+
+    <!-- Hand area at bottom -->
+    <div class="hand-area glass" id="handArea" style="display:none;">
+        <span class="hand-label" id="handLabel"></span>
+    </div>
+
+    <!-- Bid modal -->
+    <div class="modal-overlay" id="bidModal">
+        <div class="modal-box" style="min-width:420px;max-width:90vw;">
+            <div class="modal-title" id="bidTitle"></div>
+            <div id="bidTrumpInfo" style="margin-bottom:12px;display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);"><span style="font-size:0.7em;color:rgba(255,255,255,0.4);">TRUMP</span></div>
+            <div class="modal-subtitle">Select your predicted tricks:</div>
+            <div id="bidButtons" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;"></div>
+            <div style="margin-top:28px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.06);">
+                <div style="font-size:0.75em;color:rgba(255,255,255,0.35);margin-bottom:12px;">YOUR HAND</div>
+                <div id="bidHandPreview" style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Score modal -->
+    <div class="modal-overlay" id="scoreModal">
+        <div class="modal-box" style="min-width:520px;max-height:80vh;overflow-y:auto;">
+            <div class="modal-title">SCOREBOARD</div>
+            <table class="score-table" id="scoreTable"></table>
+            <div id="scoreActions" style="margin-top:24px;"></div>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket("ws://localhost:8000/ws");
+        ws.onopen = () => { document.getElementById("status").innerText = "Connected"; document.getElementById("status").style.color = "#4ade80"; };
+        ws.onerror = () => { document.getElementById("status").innerText = "Connection failed"; document.getElementById("status").style.color = "#f87171"; };
+
+        let currentRound = 1;
+        let bidPlayerIdx = 0;
+        let currentTurn = -1;
+        let allPlayersData = [];
+        let currentTrumpDisplay = null;
+        let mySeat = -1;
+        let isHost = false;
+        let playerCount = 4;
+        let myPlayerIdx = -1;
+        let roomCode = '';
+        let gamePlayers = [];
+
+        // ====== LOBBY ======
+        function createRoom() {
+            const name = document.getElementById('inputName').value.trim() || 'Player';
+            roomCode = document.getElementById('inputRoom').value.trim();
+            if (!roomCode) { alert('Enter a room code'); return; }
+            showTableForSeatSelection(name, true);
+        }
+        function joinRoomStep1() {
+            const name = document.getElementById('inputName').value.trim() || 'Player';
+            roomCode = document.getElementById('inputRoom').value.trim();
+            if (!roomCode) { alert('Enter a room code'); return; }
+            showTableForSeatSelection(name, false);
+        }
+        function showTableForSeatSelection(name, creating) {
+            document.getElementById('joinForm').style.display = 'none';
+            document.getElementById('tableArea').style.display = 'block';
+            document.getElementById('roomCodeDisplay').innerText = roomCode;
+            window._pendingName = name;
+            window._creating = creating;
+            renderRoundTable([null,null,null,null,null,null], -1);
+            document.getElementById('status').innerText = 'Click a seat to sit down';
+        }
+        function renderRoundTable(seats, hostSeat) {
+            const table = document.getElementById('roundTable');
+            table.innerHTML = '';
+            const radius = 160, cx = 210, cy = 210;
+            for (let i = 0; i < 6; i++) {
+                const angle = (-90 + i * 60) * Math.PI / 180;
+                const x = cx + radius * Math.cos(angle) - 42;
+                const y = cy + radius * Math.sin(angle) - 42;
+                const occupied = seats[i] !== null;
+                const isMe = i === mySeat;
+                const borderColor = isMe ? 'rgba(74,222,128,0.6)' : occupied ? 'rgba(168,85,247,0.4)' : 'rgba(255,255,255,0.1)';
+                const bg = occupied ? 'rgba(168,85,247,0.08)' : 'rgba(255,255,255,0.03)';
+                const onclick = occupied ? '' : `onclick="selectSeat(${i})"`;
+                let label = occupied ? seats[i] : '';
+                let badge = isMe ? '<div style="font-size:0.55em;color:#4ade80;margin-top:2px;">YOU</div>' : (i === hostSeat && occupied) ? '<div style="font-size:0.55em;color:#fbbf24;margin-top:2px;">HOST</div>' : '';
+                table.innerHTML += `<div ${onclick} style="position:absolute;left:${x}px;top:${y}px;width:84px;height:84px;border-radius:50%;border:2px solid ${borderColor};background:${bg};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${occupied?'default':'pointer'};transition:all 0.3s;backdrop-filter:blur(10px);"><div style="font-size:0.72em;color:${occupied?'rgba(255,255,255,0.9)':'rgba(255,255,255,0.25)'};font-weight:600;">${label || (i+1)}</div>${badge}</div>`;
+            }
+            document.getElementById('playerCountDisplay').innerText = seats.filter(s=>s!==null).length + '/6';
+        }
+        function selectSeat(idx) {
+            const name = window._pendingName || 'Player';
+            if (window._creating) {
+                ws.send(JSON.stringify({type:'CREATE_ROOM', room_code:roomCode, seat_idx:idx, name:name}));
+            } else {
+                ws.send(JSON.stringify({type:'JOIN_ROOM', room_code:roomCode, seat_idx:idx, name:name}));
+            }
+        }
+        function startGame() { ws.send(JSON.stringify({type:'START_GAME'})); }
+        function switchToGameScreen() {
+            document.getElementById('lobbyScreen').style.display = 'none';
+            document.getElementById('gameScreen').style.display = 'block';
+        }
+
+        function parseCard(cardStr) {
+            if (cardStr.includes('\u5deb\u5e08')) return { color: 'special', num: 'W', display: 'W' };
+            if (cardStr.includes('\u5c0f\u4e11')) return { color: 'jester', num: 'J', display: 'JESTER' };
+            let color = 'special';
+            if (cardStr.includes('\u7ea2')) color = 'red';
+            else if (cardStr.includes('\u84dd')) color = 'blue';
+            else if (cardStr.includes('\u9ec4')) color = 'yellow';
+            else if (cardStr.includes('\u7eff')) color = 'green';
+            const num = cardStr.replace(/[^0-9]/g, '');
+            return { color, num, display: num };
+        }
+
+        const jesterSvg = (size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C10 2 9 4 8 6C7 4 5 3 4 4C3 5 4 7 5 8C3 8 2 10 3 11C4 12 6 11 7 10C7 12 8 14 9 15L7 20C7 21 8 22 12 22C16 22 17 21 17 20L15 15C16 14 17 12 17 10C18 11 20 12 21 11C22 10 21 8 19 8C20 7 21 5 20 4C19 3 17 4 16 6C15 4 14 2 12 2Z" fill="currentColor" opacity="0.8"/><circle cx="8" cy="5" r="1.2" fill="currentColor"/><circle cx="16" cy="5" r="1.2" fill="currentColor"/><circle cx="12" cy="2.5" r="1" fill="currentColor"/></svg>`;
+
+        function makeCardHtml(cardStr, playerIdx, cardIdx, clickable) {
+            const c = parseCard(cardStr);
+            const onclick = clickable ? `onclick="playCard(${playerIdx}, ${cardIdx})"` : '';
+            if (c.color === 'jester') {
+                return `<div class="card special jester-card" ${onclick}>
+                    <div class="corner corner-tl"><span class="num" style="color:#f9a8d4;">${jesterSvg(14)}</span></div>
+                    <div class="corner corner-br"><span class="num" style="color:#f9a8d4;">${jesterSvg(14)}</span></div>
+                    <div class="center-symbol" style="opacity:0.35;color:#f9a8d4;">${jesterSvg(36)}</div>
+                </div>`;
+            }
+            return `<div class="card ${c.color}" ${onclick}>
+                <div class="corner corner-tl"><span class="num">${c.display}</span><span class="suit-dot"></span></div>
+                <div class="corner corner-br"><span class="num">${c.display}</span><span class="suit-dot"></span></div>
+                <div class="center-symbol">${c.display}</div>
+            </div>`;
+        }
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === "ERROR") { alert(data.msg); return; }
+            if (data.type === "ROOM_JOINED") {
+                mySeat = data.my_seat;
+                isHost = (data.host_seat === mySeat);
+                renderRoundTable(data.seats, data.host_seat);
+                document.getElementById('status').innerText = isHost ? 'You are host. Wait for players.' : 'Waiting for host to start...';
+                const btn = document.getElementById('btnStart');
+                btn.style.display = isHost ? 'inline-block' : 'none';
+                if (isHost) { const c = data.seats.filter(s=>s!==null).length>=4; btn.disabled=!c; btn.style.opacity=c?'1':'0.3'; btn.style.cursor=c?'pointer':'not-allowed'; }
+                return;
+            }
+            if (data.type === "SEATS_UPDATE") {
+                renderRoundTable(data.seats, -1);
+                if (isHost) { const btn=document.getElementById('btnStart'); btn.disabled=!data.can_start; btn.style.opacity=data.can_start?'1':'0.3'; btn.style.cursor=data.can_start?'pointer':'not-allowed'; }
+                return;
+            }
+            if (data.type === "GAME_STARTED") {
+                playerCount = data.player_count;
+                gamePlayers = data.players;
+                myPlayerIdx = gamePlayers.findIndex(p => p.seat_idx === mySeat);
+                switchToGameScreen();
+                document.getElementById('gameStatus').innerText = `${playerCount} players, ${data.max_rounds} rounds. Host clicks DEAL.`;
+                document.getElementById('players').style.gridTemplateColumns = `repeat(${Math.min(playerCount,4)},1fr)`;
+                return;
+            }
+
+            if (data.type === "BID_CONFIRMED") {
+                document.getElementById("status").innerText = data.msg;
+                const statsEl = document.querySelectorAll('.player-stats')[data.player_idx];
+                if (statsEl) statsEl.innerHTML = `Predict: <strong>${data.value}</strong> | Won: <strong>0</strong>`;
+                bidPlayerIdx++;
+                if (bidPlayerIdx < playerCount) {
+                    showBidModal(bidPlayerIdx);
+                } else {
+                    closeBidModal();
+                    ws.send(JSON.stringify({type: 'BID_DONE'}));
+                }
+                return;
+            }
+
+            if (data.type === "PLAY_START") {
+                currentTurn = data.current_turn;
+                document.getElementById("status").innerText = data.msg;
+                highlightCurrentPlayer();
+                showHandArea(currentTurn);
+                return;
+            }
+
+            if (data.type === "PLAY_OK") {
+                currentTurn = data.next_turn;
+                document.getElementById("status").innerText = `Played: ${data.card_played} | Next: P${data.next_turn + 1}`;
+                updateTrickArea(data.cards_in_trick);
+                highlightCurrentPlayer();
+                showHandArea(currentTurn);
+                return;
+            }
+
+            if (data.type === "PLAY_INVALID") {
+                alert(data.msg);
+                return;
+            }
+
+            if (data.type === "TRICK_RESULT") {
+                currentTurn = data.next_turn || data.winner;
+                let msg = `${data.winner_name} wins trick #${data.tricks_played}`;
+                if (data.round_over) {
+                    msg += data.game_over ? " | GAME OVER!" : " | Round over!";
+                    showScores(data.round_history, data.total_scores, data.game_over);
+                    hideHandArea();
+                }
+                document.getElementById("status").innerText = msg;
+                document.getElementById("trickArea").innerHTML = "";
+                allPlayersData = data.players;
+                renderPlayers(data.players);
+                highlightCurrentPlayer();
+                if (!data.round_over) showHandArea(currentTurn);
+                return;
+            }
+
+            if (data.type === "READY_UPDATE") {
+                readyPlayers = data.ready_players;
+                updateReadyStatus();
+                return;
+            }
+
+            if (data.type === "GAME_RESTART") {
+                readyPlayers = [];
+                closeScoreModal();
+                document.getElementById("gameStatus").innerText = "New game! Click DEAL to start.";
+                document.getElementById("trickArea").innerHTML = "";
+                document.getElementById("trumpCard").innerHTML = '<span style="color:rgba(255,255,255,0.3);">--</span>';
+                return;
+            }
+
+            if (data.type === "PLAYER_LEFT") {
+                document.getElementById("status").innerText = data.msg;
+                return;
+            }
+
+            if (data.type === "DEAL_RESULT") {
+                currentRound = data.round;
+                currentTurn = data.current_turn;
+                currentTrumpDisplay = data.trump.display;
+                renderTrumpCard(data.trump);
+                allPlayersData = data.players;
+                renderPlayers(data.players);
+                document.getElementById('gameStatus').innerText = `Round ${data.round}`;
+                bidPlayerIdx = 0;
+                showBidModal(0);
+                return;
+            }
+        };
+
+        function renderPlayers(players) {
+            allPlayersData = players;
+            const container = document.getElementById("players");
+            container.innerHTML = "";
+            players.forEach((p, index) => {
+                const cardCount = p.hand.length;
+                const name = gamePlayers[index] ? gamePlayers[index].name : ('P'+(index+1));
+                container.innerHTML += `
+                    <div class="glass player-box" id="pbox_${index}">
+                        <div class="player-name">${name}</div>
+                        <div class="player-stats">Predict: <strong>${p.prediction}</strong> | Won: <strong>${p.tricks_won}</strong></div>
+                        <div style="color:rgba(255,255,255,0.3);font-size:0.8em;">${cardCount} cards</div>
+                    </div>
+                `;
+            });
+        }
+
+        function showHandArea(playerIdx) {
+            const area = document.getElementById("handArea");
+            area.style.display = "flex";
+            if (!allPlayersData[playerIdx]) return;
+            const cards = allPlayersData[playerIdx].hand;
+            let html = '<span class="hand-label">P' + (playerIdx+1) + "'s hand</span>";
+            cards.forEach((card, idx) => {
+                const cardEl = makeCardHtml(card, playerIdx, idx, true);
+                // Wrap with deal animation, staggered delay
+                html += `<span class="card-deal-anim" style="animation-delay:${idx * 0.08}s">${cardEl}</span>`;
+            });
+            area.innerHTML = html;
+        }
+
+        function hideHandArea() {
+            document.getElementById("handArea").style.display = "none";
+        }
+
+        function highlightCurrentPlayer() {
+            document.querySelectorAll('.player-box').forEach((box, i) => {
+                box.classList.toggle('active', i === currentTurn);
+            });
+        }
+
+        function updateTrickArea(cards) {
+            const area = document.getElementById("trickArea");
+            let html = '';
+            cards.forEach(c => { html += makeCardHtml(c[1], -1, -1, false); });
+            area.innerHTML = html;
+        }
+
+        let readyPlayers = [];
+        let isGameOver = false;
+
+        function showScores(roundHistory, totalScores, gameOver) {
+            isGameOver = gameOver;
+            const modal = document.getElementById("scoreModal");
+            modal.style.display = "flex";
+            const table = document.getElementById("scoreTable");
+            let html = '<tr><th>Round</th>';
+            for (let i = 0; i < playerCount; i++) { const n = gamePlayers[i] ? gamePlayers[i].name : 'P'+(i+1); html += `<th>${n}</th>`; }
+            html += '</tr>';
+            roundHistory.forEach(r => {
+                html += '<tr>';
+                html += `<td style="color:#a78bfa;font-weight:600;">R${r.round}</td>`;
+                r.scores.forEach((s, i) => {
+                    const color = s >= 0 ? '#4ade80' : '#f87171';
+                    html += `<td style="color:${color};">${s > 0 ? '+' : ''}${s}<br><span style="font-size:0.7em;color:rgba(255,255,255,0.35);">${r.predictions[i]}/${r.tricks[i]}</span></td>`;
+                });
+                html += '</tr>';
+            });
+            html += '<tr style="border-top:1px solid rgba(168,85,247,0.3);"><td style="color:#c4b5fd;font-weight:700;">Total</td>';
+            totalScores.forEach(s => {
+                const color = s >= 0 ? '#4ade80' : '#f87171';
+                html += `<td style="color:${color};font-weight:700;font-size:1.2em;">${s}</td>`;
+            });
+            html += '</tr>';
+            table.innerHTML = html;
+            // Render action buttons
+            const actions = document.getElementById("scoreActions");
+            if (gameOver) {
+                actions.innerHTML = `
+                    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+                        <button class="btn-continue" onclick="sendReady()" id="btnReady">PLAY AGAIN</button>
+                        <button class="btn-continue" onclick="sendLeave()" style="background:rgba(248,113,113,0.2);border-color:rgba(248,113,113,0.4);color:#fca5a5;">LEAVE</button>
+                    </div>
+                    <div id="readyStatus" style="margin-top:16px;font-size:0.8em;color:rgba(255,255,255,0.4);"></div>`;
+            } else {
+                actions.innerHTML = `<button class="btn-continue" onclick="closeScoreModal()">CONTINUE</button>`;
+            }
+        }
+
+        function sendReady() {
+            ws.send(JSON.stringify({type: 'READY', player_idx: myPlayerIdx}));
+        }
+
+        function sendLeave() {
+            ws.send(JSON.stringify({type: 'LEAVE'}));
+            closeScoreModal();
+            document.getElementById('gameScreen').style.display = 'none';
+            document.getElementById('lobbyScreen').style.display = 'block';
+            document.getElementById('joinForm').style.display = 'block';
+            document.getElementById('tableArea').style.display = 'none';
+            document.getElementById('status').innerText = 'You left the room.';
+        }
+
+        function updateReadyStatus() {
+            const el = document.getElementById("readyStatus");
+            if (el) {
+                const dots = Array.from({length:playerCount}, (_,i) =>
+                    readyPlayers.includes(i)
+                        ? `<span style="color:#4ade80;">${gamePlayers[i]?gamePlayers[i].name:'P'+(i+1)} \u2713</span>`
+                        : `<span style="color:rgba(255,255,255,0.25);">${gamePlayers[i]?gamePlayers[i].name:'P'+(i+1)}</span>`
+                ).join('  ');
+                el.innerHTML = `${readyPlayers.length}/${playerCount} ready: ${dots}`;
+            }
+            // Update player boxes with ready badge
+            document.querySelectorAll('.player-box').forEach((box, i) => {
+                const badge = box.querySelector('.ready-badge');
+                if (readyPlayers.includes(i)) {
+                    if (!badge) {
+                        const b = document.createElement('div');
+                        b.className = 'ready-badge';
+                        b.style.cssText = 'margin-top:8px;font-size:0.7em;color:#4ade80;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.3);border-radius:8px;padding:3px 10px;display:inline-block;';
+                        b.innerText = 'READY';
+                        box.appendChild(b);
+                    }
+                } else {
+                    if (badge) badge.remove();
+                }
+            });
+            // Toggle button style
+            const btn = document.getElementById('btnReady');
+            if (btn) {
+                if (readyPlayers.includes(myPlayerIdx)) {
+                    btn.innerText = 'CANCEL';
+                    btn.style.background = 'rgba(74,222,128,0.2)';
+                    btn.style.borderColor = 'rgba(74,222,128,0.4)';
+                    btn.style.color = '#86efac';
+                } else {
+                    btn.innerText = 'PLAY AGAIN';
+                    btn.style.background = 'rgba(168,85,247,0.3)';
+                    btn.style.borderColor = 'rgba(168,85,247,0.5)';
+                    btn.style.color = '#e9d5ff';
+                }
+            }
+        }
+
+        function closeScoreModal() { document.getElementById("scoreModal").style.display = "none"; }
+
+        function renderTrumpCard(trump) {
+            const container = document.getElementById("trumpCard");
+            if (!trump.display || trump.display === '\u65e0' || trump.display === '--') {
+                container.innerHTML = '<span style="color:rgba(255,255,255,0.3);">--</span>';
+                return;
+            }
+            // Build flip animation
+            const cardHtml = makeCardHtml(trump.display, -1, -1, false);
+            container.innerHTML = `
+                <div class="card-flip-container">
+                    <div class="card-flip-inner" id="trumpFlipInner">
+                        <div class="card-back"></div>
+                        <div class="card-front">${cardHtml}</div>
+                    </div>
+                </div>`;
+            // Trigger flip after brief delay
+            setTimeout(() => {
+                const inner = document.getElementById("trumpFlipInner");
+                if (inner) {
+                    inner.classList.add('flipped');
+                    // Add glow after flip completes
+                    setTimeout(() => {
+                        const cardEl = inner.querySelector('.card');
+                        if (cardEl) cardEl.classList.add('trump-reveal');
+                    }, 600);
+                }
+            }, 300);
+            if (trump.decayed) {
+                document.getElementById("trumpLabel").innerText = 'DECAYED';
+                document.getElementById("trumpLabel").style.color = 'rgba(248,113,113,0.6)';
+            } else {
+                document.getElementById("trumpLabel").innerText = 'TRUMP';
+                document.getElementById("trumpLabel").style.color = 'rgba(255,255,255,0.4)';
+            }
+        }
+
+        function showBidModal(playerIdx) {
+            const modal = document.getElementById("bidModal");
+            modal.style.display = "flex";
+            document.getElementById("bidTitle").innerText = `P${playerIdx + 1} - Place your bid`;
+            // Show trump card directly in bid modal (no flip animation)
+            const trumpInfo = document.getElementById("bidTrumpInfo");
+            if (currentTrumpDisplay && currentTrumpDisplay !== '\u65e0') {
+                trumpInfo.innerHTML = '<span style="font-size:0.7em;color:rgba(255,255,255,0.4);margin-right:6px;">TRUMP</span>' + makeCardHtml(currentTrumpDisplay, -1, -1, false);
+            } else {
+                trumpInfo.innerHTML = '<span style="font-size:0.7em;color:rgba(255,255,255,0.4);">No Trump</span>';
+            }
+            const btnContainer = document.getElementById("bidButtons");
+            btnContainer.innerHTML = "";
+            for (let i = 0; i <= currentRound; i++) {
+                btnContainer.innerHTML += `<button class="bid-btn" onclick="sendBid(${playerIdx}, ${i})">${i}</button>`;
+            }
+            // Show hand preview in bid modal
+            const preview = document.getElementById("bidHandPreview");
+            if (allPlayersData[playerIdx]) {
+                let html = '';
+                allPlayersData[playerIdx].hand.forEach(card => { html += makeCardHtml(card, -1, -1, false); });
+                preview.innerHTML = html;
+            } else { preview.innerHTML = ''; }
+        }
+
+        function closeBidModal() { document.getElementById("bidModal").style.display = "none"; }
+        function deal() { ws.send(JSON.stringify({"type": "DEAL"})); }
+        function sendBid(idx, val) { ws.send(JSON.stringify({type: 'BID', player_idx: idx, value: val})); }
+        function playCard(playerIdx, cardIdx) { ws.send(JSON.stringify({type: 'PLAY', player_idx: playerIdx, card_index: cardIdx})); }
+    </script>
+</body>
+</html>
