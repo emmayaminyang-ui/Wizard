@@ -420,6 +420,44 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
                 "my_seat": my_seat
             }))
 
+        # === 换座位（已在房间内） ===
+        elif msg_type == "CHANGE_SEAT":
+            if not current_room or current_room not in rooms:
+                await websocket.send_text(json.dumps({"type": "ERROR", "msg": "你还没有加入房间"}))
+                continue
+            room = rooms[current_room]
+            new_seat = msg.get("seat_idx", -1)
+            if new_seat < 0 or new_seat > 5:
+                await websocket.send_text(json.dumps({"type": "ERROR", "msg": "无效座位"}))
+                continue
+            if room.seats[new_seat] is not None:
+                await websocket.send_text(json.dumps({"type": "ERROR", "msg": "座位已被占"}))
+                continue
+            # 保存名字，清除旧座位
+            player_name = room.seats[my_seat] if (0 <= my_seat < 6) else "Player"
+            if 0 <= my_seat < 6:
+                room.seats[my_seat] = None
+            # 设置新座位
+            room.seats[new_seat] = player_name
+            old_seat = my_seat
+            my_seat = new_seat
+            # 更新连接映射
+            if current_room in room_connections:
+                room_connections[current_room].pop(old_seat, None)
+                room_connections[current_room][new_seat] = websocket
+            await websocket.send_text(json.dumps({
+                "type": "ROOM_JOINED",
+                "room_code": current_room,
+                "seats": room.seats,
+                "host_seat": room.host_seat,
+                "my_seat": my_seat
+            }))
+            await broadcast(current_room, {
+                "type": "SEATS_UPDATE",
+                "seats": room.seats,
+                "can_start": room.can_start()
+            })
+
         # === 加入房间 ===
         elif msg_type == "JOIN_ROOM":
             room_code = msg.get("room_code", "").strip().upper()
