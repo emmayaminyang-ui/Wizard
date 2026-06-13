@@ -1,4 +1,4 @@
-html_content = r'''
+
 <!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -199,6 +199,7 @@ html_content = r'''
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border-top: 1px solid rgba(255,255,255,0.08);
+            flex-wrap: wrap;
         }
         .hand-label {
             position: absolute;
@@ -206,6 +207,34 @@ html_content = r'''
             left: 30px;
             font-size: 0.75em;
             color: rgba(255,255,255,0.4);
+        }
+        .hand-sort-btns {
+            position: absolute;
+            top: 6px;
+            right: 20px;
+            display: flex;
+            gap: 6px;
+        }
+        .sort-btn {
+            padding: 4px 10px;
+            font-size: 0.65em;
+            border-radius: 8px;
+            border: 1px solid rgba(168,85,247,0.3);
+            background: rgba(168,85,247,0.1);
+            color: #c4b5fd;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .sort-btn:hover { background: rgba(168,85,247,0.3); }
+        .sort-btn.active { background: rgba(168,85,247,0.4); border-color: rgba(168,85,247,0.6); color: white; }
+        .card.dragging {
+            opacity: 0.5;
+            transform: scale(0.95);
+        }
+        .card.drag-over {
+            border-color: rgba(168,85,247,0.8) !important;
+            box-shadow: 0 0 20px rgba(168,85,247,0.4);
         }
 
         .controls { text-align: center; margin-top: 20px; }
@@ -363,6 +392,50 @@ html_content = r'''
             animation: trumpGlow 1.2s ease-out;
         }
 
+        /* Toast notification (non-blocking, personal) */
+        .toast-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        .toast-box {
+            background: rgba(30, 15, 50, 0.95);
+            backdrop-filter: blur(30px);
+            border: 1px solid rgba(248, 113, 113, 0.4);
+            border-radius: 20px;
+            padding: 32px 40px;
+            text-align: center;
+            max-width: 360px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .toast-icon {
+            font-size: 2.2em;
+            margin-bottom: 12px;
+        }
+        .toast-msg {
+            color: rgba(255,255,255,0.9);
+            font-size: 1em;
+            line-height: 1.5;
+            margin-bottom: 20px;
+        }
+        .toast-btn {
+            padding: 10px 28px;
+            background: rgba(248, 113, 113, 0.2);
+            border: 1px solid rgba(248, 113, 113, 0.5);
+            color: #fca5a5;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+        .toast-btn:hover { background: rgba(248, 113, 113, 0.4); }
+
         @media (max-width: 900px) {
             .game-area { grid-template-columns: repeat(2, 1fr); }
             .hand-area { padding: 15px 10px 20px; }
@@ -444,9 +517,19 @@ html_content = r'''
         </div>
     </div>
 
+    <!-- Toast (personal warning) -->
+    <div class="toast-overlay" id="toastOverlay">
+        <div class="toast-box">
+            <div class="toast-icon">⚠️</div>
+            <div class="toast-msg" id="toastMsg"></div>
+            <button class="toast-btn" onclick="closeToast()">OK</button>
+        </div>
+    </div>
+
     <!-- Score modal -->
     <div class="modal-overlay" id="scoreModal">
         <div class="modal-box" style="min-width:520px;max-height:80vh;overflow-y:auto;">
+            <div id="scoreTaunt" style="display:none;margin-bottom:16px;padding:10px 20px;border-radius:12px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);color:#fca5a5;font-weight:600;font-size:1em;"></div>
             <div class="modal-title">SCOREBOARD</div>
             <table class="score-table" id="scoreTable"></table>
             <div id="scoreActions" style="margin-top:24px;"></div>
@@ -705,7 +788,7 @@ html_content = r'''
             }
 
             if (data.type === "PLAY_INVALID") {
-                alert(data.msg);
+                showToast(data.msg);
                 return;
             }
 
@@ -832,6 +915,43 @@ html_content = r'''
             }
         }
 
+        let currentSortMode = 'none';  // 'none', 'color', 'number'
+
+        function getCardSortValue(cardStr) {
+            // Returns {color, value} for sorting
+            if (cardStr.includes('\u5deb\u5e08')) return { color: '\uff05', value: 16 }; // 巫师 - highest
+            if (cardStr.includes('\u5c0f\u4e11')) return { color: '\uff05', value: -1 }; // 小丑 - lowest
+            let color = '\uff05';
+            if (cardStr.includes('\u7ea2')) color = '\u7ea2';
+            else if (cardStr.includes('\u84dd')) color = '\u84dd';
+            else if (cardStr.includes('\u9ec4')) color = '\u9ec4';
+            else if (cardStr.includes('\u7eff')) color = '\u7eff';
+            const num = parseInt(cardStr.replace(/[^0-9]/g, '')) || 0;
+            return { color, value: num };
+        }
+
+        function sortHand(mode) {
+            if (myPlayerIdx < 0 || !allPlayersData[myPlayerIdx]) return;
+            currentSortMode = mode;
+            const hand = allPlayersData[myPlayerIdx].hand;
+            if (mode === 'color') {
+                // Group by color, within each color sort ascending; specials at end
+                const colorOrder = {'\u7ea2': 0, '\u84dd': 1, '\u9ec4': 2, '\u7eff': 3, '\uff05': 4};
+                hand.sort((a, b) => {
+                    const sa = getCardSortValue(a), sb = getCardSortValue(b);
+                    if (colorOrder[sa.color] !== colorOrder[sb.color]) return colorOrder[sa.color] - colorOrder[sb.color];
+                    return sa.value - sb.value;
+                });
+            } else if (mode === 'number') {
+                // Sort by value descending (wizard highest, jester lowest)
+                hand.sort((a, b) => {
+                    const sa = getCardSortValue(a), sb = getCardSortValue(b);
+                    return sb.value - sa.value;
+                });
+            }
+            showHandArea(myPlayerIdx);
+        }
+
         function showHandArea(playerIdx) {
             const area = document.getElementById("handArea");
             if (playerIdx === undefined || playerIdx < 0) playerIdx = myPlayerIdx;
@@ -844,11 +964,57 @@ html_content = r'''
             const name = gamePlayers[playerIdx] ? gamePlayers[playerIdx].name : 'P'+(playerIdx+1);
             const canClick = (playerIdx === myPlayerIdx);
             let html = `<span class="hand-label">${name}</span>`;
+            // Sort buttons (only for own hand)
+            if (playerIdx === myPlayerIdx) {
+                html += `<div class="hand-sort-btns">`;
+                html += `<button class="sort-btn ${currentSortMode==='color'?'active':''}" onclick="sortHand('color')">By Color</button>`;
+                html += `<button class="sort-btn ${currentSortMode==='number'?'active':''}" onclick="sortHand('number')">By Number</button>`;
+                html += `</div>`;
+            }
             cards.forEach((card, idx) => {
                 const cardEl = makeCardHtml(card, playerIdx, idx, canClick);
-                html += `<span class="card-deal-anim" style="animation-delay:${idx * 0.08}s">${cardEl}</span>`;
+                if (playerIdx === myPlayerIdx) {
+                    html += `<span class="card-deal-anim" style="animation-delay:${idx * 0.04}s" draggable="true" ondragstart="dragStart(event,${idx})" ondragover="dragOver(event,${idx})" ondragenter="dragEnter(event)" ondragleave="dragLeave(event)" ondrop="dropCard(event,${idx})" ondragend="dragEnd(event)">${cardEl}</span>`;
+                } else {
+                    html += `<span class="card-deal-anim" style="animation-delay:${idx * 0.04}s">${cardEl}</span>`;
+                }
             });
             area.innerHTML = html;
+        }
+
+        // Drag and drop for hand reordering
+        let dragFromIdx = -1;
+        function dragStart(e, idx) {
+            dragFromIdx = idx;
+            e.target.closest('.card-deal-anim').classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+        function dragOver(e, idx) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        }
+        function dragEnter(e) {
+            e.preventDefault();
+            const span = e.target.closest('.card-deal-anim');
+            if (span) span.querySelector('.card').classList.add('drag-over');
+        }
+        function dragLeave(e) {
+            const span = e.target.closest('.card-deal-anim');
+            if (span) { const c = span.querySelector('.card'); if(c) c.classList.remove('drag-over'); }
+        }
+        function dropCard(e, toIdx) {
+            e.preventDefault();
+            if (dragFromIdx < 0 || dragFromIdx === toIdx) return;
+            const hand = allPlayersData[myPlayerIdx].hand;
+            const [moved] = hand.splice(dragFromIdx, 1);
+            hand.splice(toIdx, 0, moved);
+            currentSortMode = 'none';  // Manual reorder clears sort mode
+            showHandArea(myPlayerIdx);
+        }
+        function dragEnd(e) {
+            dragFromIdx = -1;
+            document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+            document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
         }
 
         function hideHandArea() {
@@ -869,6 +1035,16 @@ html_content = r'''
             const modal = document.getElementById("scoreModal");
             modal.style.display = "flex";
             const table = document.getElementById("scoreTable");
+            // 检查本轮自己是否扣分
+            const lastRound = roundHistory[roundHistory.length - 1];
+            const myRoundScore = lastRound ? lastRound.scores[myPlayerIdx] : 0;
+            const tauntDiv = document.getElementById('scoreTaunt');
+            if (myRoundScore < 0) {
+                tauntDiv.style.display = 'block';
+                tauntDiv.innerText = '\ud83e\udd21 \u54c8\u54c8\uff01\u53c8\u5f53\u5c0f\u4e11\u4e86\u5427\uff01';
+            } else {
+                tauntDiv.style.display = 'none';
+            }
             let html = '<tr><th>Round</th>';
             for (let i = 0; i < playerCount; i++) { const n = gamePlayers[i] ? gamePlayers[i].name : 'P'+(i+1); html += `<th>${n}</th>`; }
             html += '</tr>';
@@ -1051,14 +1227,17 @@ html_content = r'''
         }
 
         function closeBidModal() { document.getElementById("bidModal").style.display = "none"; }
+        function showToast(msg) {
+            document.getElementById('toastMsg').innerText = msg;
+            document.getElementById('toastOverlay').style.display = 'flex';
+        }
+        function closeToast() {
+            document.getElementById('toastOverlay').style.display = 'none';
+        }
         function deal() { ws.send(JSON.stringify({"type": "DEAL"})); }
         function sendBid(idx, val) { ws.send(JSON.stringify({type: 'BID', player_idx: idx, value: val})); }
         function playCard(playerIdx, cardIdx) { ws.send(JSON.stringify({type: 'PLAY', player_idx: playerIdx, card_index: cardIdx})); }
     </script>
 </body>
 </html>
-'''
 
-with open('index.html', 'w', encoding='utf-8') as f:
-    f.write(html_content)
-print('index.html written successfully')
