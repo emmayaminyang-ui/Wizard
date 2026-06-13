@@ -470,15 +470,17 @@
         // ====== LOBBY ======
         function createRoom() {
             const name = document.getElementById('inputName').value.trim() || 'Player';
-            roomCode = document.getElementById('inputRoom').value.trim();
+            roomCode = document.getElementById('inputRoom').value.trim().toUpperCase();
             if (!roomCode) { alert('Enter a room code'); return; }
             showTableForSeatSelection(name, true);
         }
         function joinRoomStep1() {
             const name = document.getElementById('inputName').value.trim() || 'Player';
-            roomCode = document.getElementById('inputRoom').value.trim();
+            roomCode = document.getElementById('inputRoom').value.trim().toUpperCase();
             if (!roomCode) { alert('Enter a room code'); return; }
-            showTableForSeatSelection(name, false);
+            // 先查询房间是否存在，存在才显示座位
+            window._pendingName = name;
+            ws.send(JSON.stringify({type:'CHECK_ROOM', room_code:roomCode}));
         }
         function showTableForSeatSelection(name, creating) {
             document.getElementById('joinForm').style.display = 'none';
@@ -557,6 +559,20 @@
             const data = JSON.parse(event.data);
 
             if (data.type === "ERROR") { alert(data.msg); return; }
+            if (data.type === "ROOM_NOT_FOUND") {
+                alert(`房间 ${data.room_code} 不存在，请检查房间号是否正确`);
+                return;
+            }
+            if (data.type === "ROOM_FOUND") {
+                // 房间存在，显示座位选择界面（带已有玩家）
+                document.getElementById('joinForm').style.display = 'none';
+                document.getElementById('tableArea').style.display = 'block';
+                document.getElementById('roomCodeDisplay').innerText = roomCode;
+                window._creating = false;
+                renderRoundTable(data.seats, data.host_seat);
+                document.getElementById('status').innerText = 'Room found! Click an empty seat to join.';
+                return;
+            }
             if (data.type === "ROOM_JOINED") {
                 mySeat = data.my_seat;
                 isHost = (data.host_seat === mySeat);
