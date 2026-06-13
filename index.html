@@ -1,4 +1,4 @@
-
+html_content = r'''
 <!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -1002,3 +1002,8 @@
     </script>
 </body>
 </html>
+'''
+
+with open('index.html', 'w', encoding='utf-8') as f:
+    f.write(html_content)
+print('index.html written successfully')
