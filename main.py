@@ -313,7 +313,12 @@ class GameRoom:
 rooms: Dict[str, GameRoom] = {}
 room_connections: Dict[str, Dict[int, fastapi.WebSocket]] = {}  # room_code -> {seat_idx: ws}
 
+from fastapi.staticfiles import StaticFiles
+
 app = fastapi.FastAPI()
+
+# 静态文件（图片等）
+app.mount("/static", StaticFiles(directory="."), name="static")
 
 @app.get("/")
 async def get(): return fastapi.responses.FileResponse('index.html')
